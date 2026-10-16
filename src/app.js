@@ -17,6 +17,8 @@ try { mapsProvider = localStorage.getItem('voyage.maps.provider') === 'google' ?
 let googleKey = '';
 try { googleKey = sessionStorage.getItem('voyage.google.session') || ''; } catch { /* Memory-only configuration remains available. */ }
 let resolveQueue = [], resolveOptions = [], resolveTripId = null, resolveGeneration = 0;
+let missingWorkflow = false;
+let missingSkipped = new Set();
 function notice(message) { $('#notice').textContent = message; }
 try {
   const saved = JSON.parse(localStorage.getItem(key) || '[]');
@@ -33,6 +35,7 @@ function storeTrips(next) {
   catch { throw new Error('Impossible de sauvegarder les voyages dans ce navigateur. Libérez de l’espace ou autorisez le stockage du site. Aucune modification des voyages n’a été enregistrée.'); }
   trips = next;
   renderTrips();
+  renderMissing();
 }
 
 function save() {
@@ -73,6 +76,7 @@ function render() {
   $('#delete-visible').textContent = `Supprimer tous les lieux affichés (${visible.length})`;
   $('#places').innerHTML = visible.map(p => `<div class="place"><input type="checkbox" data-select="${escape(p.id)}" aria-label="Sélectionner ${escape(p.name)}" ${p.selected ? 'checked' : ''}><div class="place-icon" aria-hidden="true">${p.category === 'Nature' ? '♧' : '⌁'}</div><div class="place-info"><strong>${escape(p.name)}</strong><p>${escape(p.country || 'Pays à compléter')} · ${escape(p.category)}</p>${!coordinates(p.lat, p.lng) ? '<p class="missing">Sans coordonnées · répartition dans l’ordre disponible</p>' : ''}${p.tags ? `<p>Tags : ${escape(p.tags)}</p>` : ''}${p.note ? `<p class="place-note">${escape(p.note)}</p>` : ''}${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Voir le lieu dans Google Maps ↗</a>` : ''}</div><div class="place-actions"><button class="quiet" data-locate="${escape(p.id)}">Retrouver le lieu</button><button class="quiet" data-edit="${escape(p.id)}">Modifier</button><button class="quiet" data-delete="${escape(p.id)}" aria-label="Supprimer ${escape(p.name)}">✕</button></div></div>`).join('') || (places.length ? '<p class="muted">Aucun lieu ne correspond à cette recherche.</p>' : '');
   renderStart();
+  renderMissing();
 }
 
 $('#search').addEventListener('input', render);
@@ -304,7 +308,37 @@ $('#google-forget').addEventListener('click', () => {
   try { sessionStorage.removeItem('voyage.google.session'); } catch { /* No stored session. */ }
   $('#google-status').textContent = 'Clé oubliée. Rechargez la page pour décharger Google Maps ou utiliser une autre clé.';
 });
-async function beginResolve(list, tripId = null) {
+function missingEntries() {
+  return [
+    ...places.filter(p => !coordinates(p.lat, p.lng)).map(place => ({ place, tripId: null, context: 'Carnet de lieux' })),
+    ...trips.flatMap(trip => trip.places.filter(p => !coordinates(p.lat, p.lng)).map(place => ({ place, tripId: trip.id, context: trip.name })))
+  ];
+}
+const missingKey = entry => JSON.stringify([entry.tripId || '', entry.place.id]);
+function visibleMissing() {
+  const search = $('#missing-search').value.trim().toLocaleLowerCase('fr');
+  return missingEntries().filter(e => `${e.place.name} ${e.place.country || ''} ${e.context}`.toLocaleLowerCase('fr').includes(search));
+}
+function renderMissing() {
+  const all = missingEntries(), visible = visibleMissing();
+  $('#missing-locations').hidden = !all.length;
+  $('#missing-count').textContent = all.length;
+  $('#missing-visible').textContent = `${visible.length} lieu(x) affiché(s) sur ${all.length} à compléter`;
+  $('#missing-review').disabled = !visible.length;
+  $('#missing-list').innerHTML = visible.map(e => `<article class="missing-location"><div><strong>${escape(e.place.name)}</strong><p class="small muted">${escape(e.place.country || 'Pays à préciser')} · ${escape(e.context)}</p></div><button class="secondary" type="button" data-missing-id="${escape(e.place.id)}" data-missing-trip="${escape(e.tripId || '')}">Rechercher et valider</button></article>`).join('') || '<p class="muted">Aucun lieu ne correspond à ce filtre.</p>';
+}
+$('#missing-search').addEventListener('input', renderMissing);
+$('#missing-review').addEventListener('click', () => {
+  const first = visibleMissing()[0];
+  if (first) beginResolve([first.place], first.tripId, true);
+});
+$('#missing-list').addEventListener('click', e => {
+  const button = e.target.closest('[data-missing-id]');
+  if (!button) return;
+  const entry = missingEntries().find(item => item.place.id === button.dataset.missingId && (item.tripId || '') === button.dataset.missingTrip);
+  if (entry) beginResolve([entry.place], entry.tripId, true);
+});
+async function beginResolve(list, tripId = null, reviewMissing = false) {
   const queue = list.filter(Boolean).slice(0, mapsProvider === 'free' ? 1 : 10);
   if (!queue.length) { notice('Aucun lieu à rechercher. Cochez des lieux sans coordonnées dans la vue actuelle.'); return; }
   if (mapsProvider === 'google' && !googleKey && queue.some(p => !fromURL(p.url))) {
@@ -312,6 +346,7 @@ async function beginResolve(list, tripId = null) {
     notice('Ces liens contiennent des identifiants Google, pas de coordonnées. Configurez d’abord votre clé dans « Services Google Maps ».');
     $('#google-settings').scrollIntoView({ behavior: 'smooth' }); return;
   }
+  missingWorkflow = reviewMissing; missingSkipped = new Set();
   resolveQueue = structuredClone(queue); resolveTripId = tripId;
   $('#resolve-dialog').showModal();
   await resolveNext();
@@ -319,6 +354,11 @@ async function beginResolve(list, tripId = null) {
 async function resolveNext() {
   const generation = ++resolveGeneration;
   resolveOptions = []; $('#resolve-candidates').innerHTML = '';
+  if (!resolveQueue.length && missingWorkflow) {
+    const next = visibleMissing().find(entry => !missingSkipped.has(missingKey(entry)));
+    if (next) { resolveQueue = [structuredClone(next.place)]; resolveTripId = next.tripId; }
+  }
+  $('#resolve-skip').textContent = missingWorkflow ? 'Passer ce lieu et rechercher le suivant' : 'Passer au lieu suivant';
   if (!resolveQueue.length) {
     $('#resolve-dialog').close();
     if (resolveTripId) {
@@ -339,16 +379,20 @@ async function resolveNext() {
     if (generation !== resolveGeneration) return;
     resolveOptions = options;
     $('#resolve-status').textContent = options.length ? 'Confirmez la bonne correspondance avant de conserver les coordonnées.' : 'Aucun résultat. Précisez le pays ou le nom avec « Modifier », puis réessayez.';
-    $('#resolve-candidates').innerHTML = options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.name)}</strong><p class="small muted">${escape(o.address)} · ${escape(o.country || 'Pays inconnu')}</p><p class="small muted">${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}${o.exact ? ' · Identifiant Google identique au lien enregistré' : ''}</p>${resultLink(o.url) ? `<a class="place-link" href="${escape(resultLink(o.url))}" target="_blank" rel="noopener noreferrer">Vérifier le lieu · ${escape(o.source || 'Google Maps')} ↗</a>` : ''}<button class="secondary" type="button" data-resolve-choice="${i}">Confirmer ce lieu</button></article>`).join('');
+    $('#resolve-candidates').innerHTML = options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.name)}</strong><p class="small muted">${escape(o.address)} · ${escape(o.country || 'Pays inconnu')}</p><p class="small muted">${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}${o.exact ? ' · Identifiant Google identique au lien enregistré' : ''}</p>${resultLink(o.url) ? `<a class="place-link" href="${escape(resultLink(o.url))}" target="_blank" rel="noopener noreferrer">Vérifier le lieu · ${escape(o.source || 'Google Maps')} ↗</a>` : ''}<button class="secondary" type="button" data-resolve-choice="${i}">${missingWorkflow ? 'Confirmer et rechercher le suivant' : 'Confirmer ce lieu'}</button></article>`).join('');
+  if (missingWorkflow) ($('#resolve-candidates button') || $('#resolve-skip')).focus();
   } catch (error) { if (generation === resolveGeneration) $('#resolve-status').textContent = `${googleError(error)} Vérifiez la connexion et les réglages du service, ou précisez le pays et la ville dans le nom du lieu.`; }
 }
 $('#google-resolve').addEventListener('click', () => beginResolve(filtered().filter(p => p.selected && !coordinates(p.lat, p.lng))));
 $('#google-resolve-trip').addEventListener('click', () => {
   if (currentRecord) beginResolve(currentRecord.places.filter(p => !coordinates(p.lat, p.lng)), currentRecord.id);
 });
-$('#resolve-skip').addEventListener('click', () => { resolveQueue.shift(); resolveNext(); });
+$('#resolve-skip').addEventListener('click', () => {
+  if (missingWorkflow && resolveQueue[0]) missingSkipped.add(missingKey({ place: resolveQueue[0], tripId: resolveTripId }));
+  resolveQueue.shift(); resolveNext();
+});
 $('#resolve-close').addEventListener('click', () => $('#resolve-dialog').close());
-$('#resolve-dialog').addEventListener('close', () => { resolveGeneration++; resolveQueue = []; });
+$('#resolve-dialog').addEventListener('close', () => { resolveGeneration++; resolveQueue = []; missingWorkflow = false; });
 $('#resolve-candidates').addEventListener('click', e => {
   const button = e.target.closest('[data-resolve-choice]');
   if (!button) return;

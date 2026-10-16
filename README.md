@@ -67,3 +67,11 @@ La clé n’est pas committée, exportée ou sauvegardée dans les voyages. Elle
 - Les erreurs de configuration, les lieux sans coordonnées et les trajets absents sont signalés ; aucun chiffre estimé n’est présenté comme une réponse Google.
 
 Les tests automatisés et les tests navigateur peuvent simuler Places et Routes pour vérifier les requêtes et l’affichage. Une validation réelle nécessite une clé avec les services et la facturation activés ; les tests simulés ne prouvent pas le fonctionnement du compte Google.
+
+## Validation rapide au chargement
+
+La section « Lieux sans coordonnées » apparaît automatiquement si le carnet ou les dossiers de voyages contiennent des lieux incomplets. Elle est indépendante des filtres et des cases du carnet. Chaque entrée indique son pays et son carnet ou dossier d’origine ; les copies sauvegardées sont affichées séparément et restent indépendantes.
+
+Filtrez par nom, pays ou voyage, puis utilisez « Commencer la validation » ou « Rechercher et valider ». « Confirmer et rechercher le suivant » sauvegarde le résultat et déclenche la recherche du prochain lieu incomplet dans ce filtre. Le focus passe au bouton de confirmation pour une validation au clavier. « Passer ce lieu et rechercher le suivant » conserve le lieu incomplet pour une prochaine session de validation. Fermer la recherche interrompt la session. Le compteur et la liste se mettent à jour après chaque sauvegarde et après chaque import ou suppression.
+
+Aucune requête externe ne part au chargement ou à la saisie du filtre. Chaque nouvelle recherche résulte d’un clic explicite de recherche, confirmation ou passage au suivant, avec les limites de fréquence et le cache du fournisseur gratuit. Les coordonnées validées persistent dans le navigateur ; au prochain chargement, seuls les lieux encore incomplets apparaissent.
