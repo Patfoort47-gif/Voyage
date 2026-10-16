@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { coordinates, fromURL, importPlaces, parseCSV, planTrip, mapsLinks, demo } from '../src/core.js';
+import { coordinates, fromURL, importPlaces, parseCSV, planTrip, mapsLinks, savedMapsURL, demo } from '../src/core.js';
 
 test('CSV Takeout : notes multilignes, virgules et guillemets', () => {
   const csv = 'Title,Note,URL\r\n"Palais, jardin","Une note\navec ""citation""",https://maps.google.com/?q=38.7%2C-9.1\r\n';
@@ -13,6 +13,36 @@ test('CSV français et coordonnées absentes ne deviennent pas 0,0', () => {
   assert.equal(p.lat, null); assert.equal(p.country, 'France');
   assert.equal(coordinates('', ''), null); assert.equal(coordinates(91, 0), null);
   assert.equal(fromURL('https://google.com/maps/@48.3,2.1,10z'), null);
+});
+test('export Google français : Titre, Note, URL, Tags, Commentaire et ligne vide', () => {
+  const url = 'https://www.google.com/maps/place/Un+lieu/data=!4m2!3m1!1s0x1234:0x5678';
+  const csv = `\uFEFFTitre,Note,URL,Tags,Commentaire\r\n,,,,\r\n"Lieu, jardin","Note\nmultiligne",${url},"nature, balade","Une ""vue"""\r\n`;
+  const places = importPlaces(csv, 'À visiter.csv', '', 'À visiter');
+  assert.equal(places.length, 1);
+  const [p] = places;
+  assert.equal(p.name, 'Lieu, jardin');
+  assert.equal(p.note, 'Note\nmultiligne\n\nUne "vue"');
+  assert.equal(p.tags, 'nature, balade');
+  assert.equal(p.url, url);
+  assert.equal(p.country, '');
+  assert.equal(p.lat, null); assert.equal(p.lng, null);
+  assert.equal(p.category, 'À visiter');
+});
+test('CSV sans coordonnées : répartition explicite, sans distances inventées, liens par nom', () => {
+  const places = importPlaces('Titre,Note,URL,Tags,Commentaire\nJardin,,,,\nMusée,,,,\nPalais,,,,', 'À visiter.csv', 'Monaco').map((p, i) => ({ ...p, id: String(i) }));
+  assert.throws(() => planTrip(places, 2), /coordonnées/);
+  const trip = planTrip(places, 2, '', true);
+  assert.deepEqual(trip.days.flatMap(d => d.stops.map(p => p.name)), ['Jardin', 'Musée', 'Palais']);
+  assert.ok(trip.days.every(d => d.km === null));
+  const url = new URL(mapsLinks(trip.days[0], 'walking')[0]);
+  assert.equal(url.searchParams.get('origin'), 'Jardin, Monaco');
+  assert.equal(url.searchParams.get('destination'), 'Musée, Monaco');
+  assert.equal(url.searchParams.get('travelmode'), 'walking');
+});
+test('liens originaux conservés sans autoriser une URL exécutable ou un faux domaine Google', () => {
+  const url = 'https://www.google.com/maps/place/Un+lieu/data=!4m2!3m1!1s0x1234:0x5678';
+  assert.equal(mapsLinks({ stops: [{ name: 'Lieu', country: '', lat: null, lng: null, url }] }, 'driving')[0], url);
+  for (const invalid of ['javascript:alert(1)', 'https://google.com.evil.test/maps', 'http://google.com/maps']) assert.equal(savedMapsURL(invalid), null);
 });
 test('GeoJSON Takeout utilise longitude puis latitude et les métadonnées', () => {
   const data = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [-9.2, 38.7] }, properties: { Title: 'Belém', Location: { Country: 'Portugal' }, Comment: 'Vue' } }] };

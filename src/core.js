@@ -43,16 +43,17 @@ export function importPlaces(text, filename, country = '', category = 'À visite
     rows = data.features.map(f => {
       const p = f.properties || {}, location = p.Location || {}, point = f.geometry?.type === 'Point' ? f.geometry.coordinates : [];
       return { title: p.name || p.Title || location['Business Name'], country: p.country || location.Country || country,
-        category: p.category || category, url: p['Google Maps URL'] || p.url || '', latitude: point[1], longitude: point[0], note: p.Comment || p.note || '' };
+        category: p.category || category, tags: p.tags || '', url: p['Google Maps URL'] || p.url || '', latitude: point[1], longitude: point[0], note: p.Comment || p.note || '' };
     });
   } else if (/\.csv$/i.test(filename)) rows = parseCSV(text);
   else throw new Error('Choisis un fichier CSV, JSON ou GeoJSON décompressé.');
   const places = rows.map(r => {
     const url = r.url || r['google maps url'] || '';
     const point = coordinates(r.latitude ?? r.lat, r.longitude ?? r.lng ?? r.lon) || fromURL(url);
-    return { name: String(r.title || r.name || r.nom || '').trim(), country: String(r.country || r.pays || country).trim(), category: String(r.category || r.catégorie || category).trim(), note: String(r.note || r.notes || ''), url: String(url), ...(point || { lat: null, lng: null }) };
+    const note = [...new Set([r.note || r.notes, r.commentaire || r.comment].map(v => String(v || '').trim()).filter(Boolean))].join('\n\n');
+    return { name: String(r.titre || r.title || r.name || r.nom || '').trim(), country: String(r.country || r.pays || country).trim(), category: String(r.category || r.catégorie || category).trim(), tags: String(r.tags || '').trim(), note, url: String(url).trim(), ...(point || { lat: null, lng: null }) };
   }).filter(p => p.name);
-  if (!places.length) throw new Error('Aucun lieu reconnu. Colonnes attendues : Title ou name, URL, country, latitude, longitude.');
+  if (!places.length) throw new Error('Aucun lieu reconnu. Colonnes attendues : Titre, Note, URL, Tags, Commentaire (ou Title / name).');
   return places;
 }
 
@@ -62,16 +63,16 @@ export function distance(a, b) {
   return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(Math.max(0, 1 - x)));
 }
 
-export function planTrip(places, days, startId) {
+export function planTrip(places, days, startId, fileOrder = false) {
   if (!Number.isInteger(days) || days < 1 || days > 30) throw new Error('Choisis entre 1 et 30 jours.');
   if (!places.length) throw new Error('Sélectionne au moins un lieu.');
-  if (places.some(p => !coordinates(p.lat, p.lng))) throw new Error('Complète les coordonnées des lieux sélectionnés avant de calculer le parcours.');
+  if (!fileOrder && places.some(p => !coordinates(p.lat, p.lng))) throw new Error('Ce fichier ne fournit pas les coordonnées de tous les lieux. Coche « Répartir dans l’ordre du carnet » ou complète les coordonnées pour organiser les étapes par proximité.');
   const remaining = [...places];
   const start = Math.max(0, remaining.findIndex(p => p.id === startId));
   const ordered = [remaining.splice(start, 1)[0]];
   while (remaining.length) {
     let best = 0;
-    remaining.forEach((p, i) => { if (distance(ordered.at(-1), p) < distance(ordered.at(-1), remaining[best])) best = i; });
+    if (!fileOrder) remaining.forEach((p, i) => { if (distance(ordered.at(-1), p) < distance(ordered.at(-1), remaining[best])) best = i; });
     ordered.push(remaining.splice(best, 1)[0]);
   }
   // Keep geographic continuity while balancing the number of visits.
@@ -81,16 +82,23 @@ export function planTrip(places, days, startId) {
     const stops = ordered.slice(offset, offset + size);
     const previous = offset ? ordered[offset - 1] : null;
     const travel = previous ? [previous, ...stops] : stops;
-    const km = travel.slice(1).reduce((sum, p, j) => sum + distance(travel[j], p), 0);
+    const km = fileOrder ? null : travel.slice(1).reduce((sum, p, j) => sum + distance(travel[j], p), 0);
     result.push({ stops, previous, km }); offset += size;
   }
-  return { days: result, unusedDays: days - count };
+  return { days: result, unusedDays: days - count, fileOrder };
+}
+
+export function savedMapsURL(value) {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'https:' && (['google.com', 'www.google.com', 'maps.google.com', 'maps.app.goo.gl'].includes(u.hostname) || (u.hostname === 'goo.gl' && u.pathname.startsWith('/maps'))) ? u.href : null;
+  } catch { return null; }
 }
 
 export function mapsLinks(day, mode) {
   const stops = day.previous ? [day.previous, ...day.stops] : day.stops;
-  const coord = p => `${p.lat},${p.lng}`;
-  if (stops.length === 1) return [`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(coord(stops[0]))}`];
+  const coord = p => coordinates(p.lat, p.lng) ? `${p.lat},${p.lng}` : [p.name, p.country].filter(Boolean).join(', ');
+  if (stops.length === 1) return [savedMapsURL(stops[0].url) || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(coord(stops[0]))}`];
   const links = [];
   for (let i = 0; i < stops.length - 1; i += 4) {
     const part = stops.slice(i, i + 5);
