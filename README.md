@@ -75,3 +75,13 @@ La section « Lieux sans coordonnées » apparaît automatiquement si le carnet 
 Filtrez par nom, pays ou voyage, puis utilisez « Commencer la validation » ou « Rechercher et valider ». « Confirmer et rechercher le suivant » sauvegarde le résultat et déclenche la recherche du prochain lieu incomplet dans ce filtre. Le focus passe au bouton de confirmation pour une validation au clavier. « Passer ce lieu et rechercher le suivant » conserve le lieu incomplet pour une prochaine session de validation. Fermer la recherche interrompt la session. Le compteur et la liste se mettent à jour après chaque sauvegarde et après chaque import ou suppression.
 
 Aucune requête externe ne part au chargement ou à la saisie du filtre. Chaque nouvelle recherche résulte d’un clic explicite de recherche, confirmation ou passage au suivant, avec les limites de fréquence et le cache du fournisseur gratuit. Les coordonnées validées persistent dans le navigateur ; au prochain chargement, seuls les lieux encore incomplets apparaissent.
+
+## Lieux difficiles à retrouver
+
+La recherche gratuite essaie Nominatim, une version simplifiée du nom si nécessaire (articles et parenthèses), puis Photon si aucun résultat n’est trouvé ou si Nominatim est indisponible. Les requêtes restent sérialisées et espacées. Photon utilise également les données OpenStreetMap ; il ne garantit pas la présence des lieux spécifiques à Google.
+
+Dans la fenêtre de validation, modifiez le nom, ajoutez une ville ou une zone et le pays, puis « Relancer la recherche ». Vous pouvez choisir Photon directement ou Nominatim uniquement. Les résultats restent à confirmer ; aucune adresse n’est attribuée automatiquement. Les résultats vides ne sont plus conservés pendant 30 jours ; un nouveau cache ignore les anciennes réponses vides.
+
+Si le lieu est absent des deux moteurs, ouvrez « Lieu introuvable ? Saisir ses coordonnées ». Ouvrez le lien Google Maps original, faites un clic droit sur le point pour copier latitude et longitude, puis validez-les dans les champs dédiés. Cette saisie fonctionne dans le carnet et les voyages sauvegardés, et poursuit la validation rapide si elle est active. L’ajout de contexte sert à la recherche, sans renommer le lieu enregistré.
+
+Le serveur Photon compatible est modifiable dans les réglages, au même titre que Nominatim. Le service public par défaut est `https://photon.komoot.io/api` ; sa disponibilité n’est pas garantie. Les tests avec réponses simulées vérifient le repli, la conversion des résultats et le comportement du cache, pas le taux de correspondance réel sur vos lieux.

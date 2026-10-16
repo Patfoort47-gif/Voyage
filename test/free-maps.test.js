@@ -29,6 +29,40 @@ test('OSRM : longitude puis latitude, vraies unités et liaison depuis la veille
   assert.ok(formatFreeRoute(result).includes('sans trafic'));
 });
 
+test('si Nominatim ne trouve rien : nom simplifié puis recherche Photon avec ville et pays', async () => {
+  const queries = [];
+  const found = await findFreePlaces({ name: 'Le Jardin Japonais (entrée)', searchCity: 'Monaco', country: 'Monaco' }, defaultServices, async value => {
+    const url = new URL(value); queries.push(url);
+    if (url.hostname.includes('nominatim')) return [];
+    return { features: [{ geometry: { type: 'Point', coordinates: [7.43, 43.74] }, properties: { name: 'Jardin japonais', city: 'Monaco', country: 'Monaco', osm_type: 'W', osm_id: 123 } }] };
+  }, null);
+  assert.equal(queries.length, 3);
+  assert.equal(queries[0].searchParams.get('q'), 'Le Jardin Japonais (entrée), Monaco, Monaco');
+  assert.equal(queries[1].searchParams.get('q'), 'Jardin Japonais, Monaco, Monaco');
+  assert.equal(queries[2].hostname, 'photon.komoot.io');
+  assert.equal(found[0].lat, 43.74); assert.equal(found[0].source, 'OpenStreetMap / Photon');
+  assert.equal(found[0].url, 'https://www.openstreetmap.org/way/123');
+});
+
+test('les résultats vides ne sont pas conservés et bloquants lors des prochaines tentatives', async () => {
+  const values = new Map(), storage = { getItem: k => values.get(k) || null, setItem: (k, v) => values.set(k, v) };
+  let calls = 0;
+  const request = async () => { calls++; return []; };
+  const p = { name: 'Introuvable', country: 'France', searchEngine: 'nominatim' };
+  assert.deepEqual(await findFreePlaces(p, defaultServices, request, storage), []);
+  assert.deepEqual(await findFreePlaces(p, defaultServices, request, storage), []);
+  assert.equal(calls, 2);
+});
+
+test('Photon peut être choisi directement sans requête Nominatim et écarte les points invalides', async () => {
+  const found = await findFreePlaces({ name: 'Ancien nom', searchName: 'Nom local', searchCity: 'Amman', country: 'Jordanie', searchEngine: 'photon' }, defaultServices, async value => {
+    const url = new URL(value); assert.equal(url.hostname, 'photon.komoot.io');
+    assert.equal(url.searchParams.get('q'), 'Nom local, Amman, Jordanie');
+    return { features: [{ geometry: { type: 'Point', coordinates: [200, 100] }, properties: {} }] };
+  }, null);
+  assert.deepEqual(found, []);
+});
+
 test('trajet à pied : serveur piéton distinct, jamais une estimation voiture renommée', async () => {
   await computeFreeDay({ stops: [{ lat: 43, lng: 7 }, { lat: 44, lng: 8 }] }, 'walking', defaultServices, async url => {
     assert.ok(url.startsWith(defaultServices.walking)); assert.ok(!url.includes('/driving/'));

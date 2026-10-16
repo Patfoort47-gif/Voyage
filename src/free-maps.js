@@ -2,10 +2,11 @@ import { coordinates, fromURL, mapsReference } from './core.js';
 
 export const defaultServices = {
   search: 'https://nominatim.openstreetmap.org/search',
+  photon: 'https://photon.komoot.io/api',
   driving: 'https://router.project-osrm.org/route/v1/driving',
   walking: 'https://routing.openstreetmap.de/routed-foot/route/v1/foot'
 };
-const cacheKey = 'voyage.osm.cache.v1';
+const cacheKey = 'voyage.osm.cache.v2';
 let pending = Promise.resolve();
 const optionalStorage = () => { try { return globalThis.localStorage; } catch { return null; } };
 
@@ -45,23 +46,53 @@ export async function findFreePlaces(place, services = readServices(), request =
   const embedded = fromURL(place.url);
   if (embedded) return [{ ...embedded, name: place.name, country: place.country, address: 'Coordonnées présentes dans le lien enregistré', direct: true }];
   const ref = mapsReference(place.url);
-  const query = [place.name || ref.name, place.country].filter(Boolean).join(', ');
+  const name = place.searchName?.trim() || place.name || ref.name;
+  const query = [name, place.searchCity, place.country].filter(Boolean).join(', ');
+  const simple = name.replace(/\([^)]*\)/g, '').replace(/^(?:le |la |les |l['’])/i, '').replace(/\s+/g, ' ').trim();
+  const relaxed = [simple || name, place.searchCity, place.country].filter(Boolean).join(', ');
+  const engine = place.searchEngine || 'auto';
   const url = new URL(serviceURL(services.search));
   url.search = new URLSearchParams({ q: query, format: 'jsonv2', addressdetails: '1', limit: '5', 'accept-language': 'fr' });
-  const identity = url.href;
+  const identity = JSON.stringify([url.href, services.photon || defaultServices.photon, engine]);
   let cache = {};
   try { cache = JSON.parse(storage.getItem(cacheKey) || '{}'); } catch { /* Cache is optional. */ }
-  if (cache?.[identity]?.at > Date.now() - 30 * 86400000 && Array.isArray(cache[identity].results)) return cache[identity].results;
-  const data = await request(url.href);
-  if (!Array.isArray(data)) throw new Error('Le service de recherche n’a pas renvoyé de résultats valides.');
-  const results = data.filter(p => coordinates(p.lat, p.lon)).map(p => ({
+  if (cache?.[identity]?.results?.length && cache[identity].at > Date.now() - 30 * 86400000) return cache[identity].results;
+  let results = [], failure;
+  if (engine !== 'photon') {
+    try {
+      let data = await request(url.href);
+      if (!Array.isArray(data)) throw new Error('Le service de recherche n’a pas renvoyé de résultats valides.');
+      if (!data.length && relaxed !== query) {
+        url.searchParams.set('q', relaxed); data = await request(url.href);
+        if (!Array.isArray(data)) throw new Error('Réponse de recherche invalide.');
+      }
+      results = data.filter(p => coordinates(p.lat, p.lon)).map(p => ({
     ...coordinates(p.lat, p.lon), name: p.name || String(p.display_name || place.name).split(',')[0],
     address: p.display_name || '', country: p.address?.country || place.country,
     url: ['node', 'way', 'relation'].includes(p.osm_type) && /^\d+$/.test(String(p.osm_id)) ? `https://www.openstreetmap.org/${p.osm_type}/${p.osm_id}` : '', source: 'OpenStreetMap'
   }));
+    } catch (error) { failure = error; }
+  }
+  if ((engine === 'auto' && !results.length) || engine === 'photon') {
+    try {
+      const photon = new URL(serviceURL(services.photon || defaultServices.photon));
+      photon.search = new URLSearchParams({ q: relaxed, limit: '5', lang: 'fr' });
+      const data = await request(photon.href);
+      if (!Array.isArray(data.features)) throw new Error('Photon n’a pas renvoyé de résultats valides.');
+      results = data.features.filter(f => f.geometry?.type === 'Point' && coordinates(f.geometry.coordinates?.[1], f.geometry.coordinates?.[0])).map(f => {
+        const p = f.properties || {}, type = { N: 'node', W: 'way', R: 'relation' }[p.osm_type];
+        return { ...coordinates(f.geometry.coordinates[1], f.geometry.coordinates[0]), name: p.name || name,
+          address: [...new Set([p.name, p.street, p.city, p.state, p.country].filter(Boolean))].join(', '), country: p.country || place.country,
+          url: type && /^\d+$/.test(String(p.osm_id)) ? `https://www.openstreetmap.org/${type}/${p.osm_id}` : '', source: 'OpenStreetMap / Photon' };
+      });
+      failure = null;
+    } catch (error) { failure = error; }
+  }
+  if (!results.length && failure) throw failure;
   try {
     cache = Object.fromEntries(Object.entries(cache || {}).filter(([, v]) => v?.at > Date.now() - 30 * 86400000).slice(-199));
-    cache[identity] = { at: Date.now(), results }; storage.setItem(cacheKey, JSON.stringify(cache));
+    if (results.length) cache[identity] = { at: Date.now(), results };
+    storage.setItem(cacheKey, JSON.stringify(cache));
   } catch { /* A disabled cache must not discard search results. */ }
   return results;
 }

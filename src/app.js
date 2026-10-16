@@ -277,7 +277,7 @@ for (const [name, value] of Object.entries(readServices())) freeForm.elements[na
 freeForm.addEventListener('submit', e => {
   e.preventDefault();
   try {
-    const services = Object.fromEntries(['search', 'driving', 'walking'].map(name => [name, serviceURL(freeForm.elements[name].value.trim())]));
+    const services = Object.fromEntries(['search', 'photon', 'driving', 'walking'].map(name => [name, serviceURL(freeForm.elements[name].value.trim())]));
     localStorage.setItem('voyage.free.services', JSON.stringify(services));
     notice('Serveurs gratuits enregistrés. Les recherches et coordonnées seront transmises à ces serveurs.');
   } catch (error) { notice(error.message); }
@@ -351,7 +351,7 @@ async function beginResolve(list, tripId = null, reviewMissing = false) {
   $('#resolve-dialog').showModal();
   await resolveNext();
 }
-async function resolveNext() {
+async function resolveNext(refineSearch = false) {
   const generation = ++resolveGeneration;
   resolveOptions = []; $('#resolve-candidates').innerHTML = '';
   if (!resolveQueue.length && missingWorkflow) {
@@ -369,16 +369,28 @@ async function resolveNext() {
     return;
   }
   const p = resolveQueue[0];
+  $('#resolve-search-engine').closest('label').hidden = mapsProvider !== 'free';
+  if (!refineSearch) {
+    $('#resolve-search-name').value = p.name;
+    $('#resolve-search-city').value = '';
+    $('#resolve-search-country').value = p.country || '';
+    $('#resolve-search-engine').value = 'auto';
+    $('#resolve-manual-form').reset();
+    $('#resolve-manual-form').elements.country.value = p.country || '';
+    $('#resolve-manual').open = false;
+  }
+  const searchPlace = { ...p, searchName: $('#resolve-search-name').value.trim(), searchCity: $('#resolve-search-city').value.trim(), country: $('#resolve-search-country').value.trim(), searchEngine: $('#resolve-search-engine').value };
+  if (refineSearch) searchPlace.url = '';
   $('#resolve-title').textContent = `${p.name} · ${resolveQueue.length} lieu(x) restant(s) dans ce lot`;
   $('#resolve-original').hidden = !savedMapsURL(p.url);
   $('#resolve-original').href = savedMapsURL(p.url) || '#';
   $('#resolve-status').textContent = 'Recherche en cours…';
   try {
     const embedded = fromURL(p.url);
-    const options = mapsProvider === 'free' ? await findFreePlaces(p) : await findGooglePlaces(p, embedded ? null : await requireGoogle());
+    const options = mapsProvider === 'free' ? await findFreePlaces(searchPlace) : await findGooglePlaces({ ...searchPlace, name: [searchPlace.searchName, searchPlace.searchCity].filter(Boolean).join(', '), url: refineSearch ? '' : p.url }, embedded && !refineSearch ? null : await requireGoogle());
     if (generation !== resolveGeneration) return;
     resolveOptions = options;
-    $('#resolve-status').textContent = options.length ? 'Confirmez la bonne correspondance avant de conserver les coordonnées.' : 'Aucun résultat. Précisez le pays ou le nom avec « Modifier », puis réessayez.';
+    $('#resolve-status').textContent = options.length ? 'Confirmez la bonne correspondance avant de conserver les coordonnées.' : 'Aucun résultat trouvé. Précisez la ville et le pays ci-dessus, essayez Photon ou saisissez les coordonnées depuis le lien Maps.';
     $('#resolve-candidates').innerHTML = options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.name)}</strong><p class="small muted">${escape(o.address)} · ${escape(o.country || 'Pays inconnu')}</p><p class="small muted">${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}${o.exact ? ' · Identifiant Google identique au lien enregistré' : ''}</p>${resultLink(o.url) ? `<a class="place-link" href="${escape(resultLink(o.url))}" target="_blank" rel="noopener noreferrer">Vérifier le lieu · ${escape(o.source || 'Google Maps')} ↗</a>` : ''}<button class="secondary" type="button" data-resolve-choice="${i}">${missingWorkflow ? 'Confirmer et rechercher le suivant' : 'Confirmer ce lieu'}</button></article>`).join('');
   if (missingWorkflow) ($('#resolve-candidates button') || $('#resolve-skip')).focus();
   } catch (error) { if (generation === resolveGeneration) $('#resolve-status').textContent = `${googleError(error)} Vérifiez la connexion et les réglages du service, ou précisez le pays et la ville dans le nom du lieu.`; }
@@ -393,10 +405,8 @@ $('#resolve-skip').addEventListener('click', () => {
 });
 $('#resolve-close').addEventListener('click', () => $('#resolve-dialog').close());
 $('#resolve-dialog').addEventListener('close', () => { resolveGeneration++; resolveQueue = []; missingWorkflow = false; });
-$('#resolve-candidates').addEventListener('click', e => {
-  const button = e.target.closest('[data-resolve-choice]');
-  if (!button) return;
-  const found = resolveOptions[Number(button.dataset.resolveChoice)], original = resolveQueue[0];
+function confirmResolved(found) {
+  const original = resolveQueue[0];
   if (!found || !original) return;
   const patch = { lat: found.lat, lng: found.lng, country: found.country || original.country, googlePlaceId: found.placeId || '' };
   try {
@@ -413,6 +423,17 @@ $('#resolve-candidates').addEventListener('click', e => {
     }
     resolveQueue.shift(); resolveNext();
   } catch (error) { $('#resolve-status').textContent = `Coordonnées non enregistrées : ${googleError(error)}`; }
+}
+$('#resolve-search-form').addEventListener('submit', e => { e.preventDefault(); resolveNext(true); });
+$('#resolve-candidates').addEventListener('click', e => {
+  const button = e.target.closest('[data-resolve-choice]');
+  if (button) confirmResolved(resolveOptions[Number(button.dataset.resolveChoice)]);
+});
+$('#resolve-manual-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const form = e.target, point = coordinates(form.elements.lat.value, form.elements.lng.value);
+  if (!point) { $('#resolve-status').textContent = 'Indiquez une latitude et une longitude valides.'; return; }
+  confirmResolved({ ...point, country: form.elements.country.value.trim() || $('#resolve-search-country').value.trim() });
 });
 $('#google-routes').addEventListener('click', async () => {
   if (!currentRecord) return;
