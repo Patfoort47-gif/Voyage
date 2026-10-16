@@ -1,3 +1,4 @@
+import { loadGoogle, findGooglePlaces, computeGoogleDay, formatGoogleRoute } from './google-maps.js';
 import { createTrip, loadTrips, persistTrips } from './trips.js';
 import { coordinates, fromURL, importPlaces, planTrip, mapsLinks, savedMapsURL, demo } from './core.js';
 
@@ -8,6 +9,11 @@ let places = [];
 let trips = [];
 let tripStorageReadable = true;
 let editingPlaces = [];
+let currentRecord = null;
+let routeGeneration = 0;
+let googleKey = '';
+try { googleKey = sessionStorage.getItem('voyage.google.session') || ''; } catch { /* Memory-only configuration remains available. */ }
+let resolveQueue = [], resolveOptions = [], resolveTripId = null, resolveGeneration = 0;
 function notice(message) { $('#notice').textContent = message; }
 try {
   const saved = JSON.parse(localStorage.getItem(key) || '[]');
@@ -62,7 +68,7 @@ function render() {
   const visible = filtered();
   $('#delete-visible').disabled = !visible.length;
   $('#delete-visible').textContent = `Supprimer tous les lieux affichés (${visible.length})`;
-  $('#places').innerHTML = visible.map(p => `<div class="place"><input type="checkbox" data-select="${escape(p.id)}" aria-label="Sélectionner ${escape(p.name)}" ${p.selected ? 'checked' : ''}><div class="place-icon" aria-hidden="true">${p.category === 'Nature' ? '♧' : '⌁'}</div><div class="place-info"><strong>${escape(p.name)}</strong><p>${escape(p.country || 'Pays à compléter')} · ${escape(p.category)}</p>${!coordinates(p.lat, p.lng) ? '<p class="missing">Sans coordonnées · répartition dans l’ordre disponible</p>' : ''}${p.tags ? `<p>Tags : ${escape(p.tags)}</p>` : ''}${p.note ? `<p class="place-note">${escape(p.note)}</p>` : ''}${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Voir le lieu dans Google Maps ↗</a>` : ''}</div><div class="place-actions"><button class="quiet" data-edit="${escape(p.id)}">Modifier</button><button class="quiet" data-delete="${escape(p.id)}" aria-label="Supprimer ${escape(p.name)}">✕</button></div></div>`).join('') || (places.length ? '<p class="muted">Aucun lieu ne correspond à cette recherche.</p>' : '');
+  $('#places').innerHTML = visible.map(p => `<div class="place"><input type="checkbox" data-select="${escape(p.id)}" aria-label="Sélectionner ${escape(p.name)}" ${p.selected ? 'checked' : ''}><div class="place-icon" aria-hidden="true">${p.category === 'Nature' ? '♧' : '⌁'}</div><div class="place-info"><strong>${escape(p.name)}</strong><p>${escape(p.country || 'Pays à compléter')} · ${escape(p.category)}</p>${!coordinates(p.lat, p.lng) ? '<p class="missing">Sans coordonnées · répartition dans l’ordre disponible</p>' : ''}${p.tags ? `<p>Tags : ${escape(p.tags)}</p>` : ''}${p.note ? `<p class="place-note">${escape(p.note)}</p>` : ''}${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Voir le lieu dans Google Maps ↗</a>` : ''}</div><div class="place-actions"><button class="quiet" data-locate="${escape(p.id)}">Retrouver Maps</button><button class="quiet" data-edit="${escape(p.id)}">Modifier</button><button class="quiet" data-delete="${escape(p.id)}" aria-label="Supprimer ${escape(p.name)}">✕</button></div></div>`).join('') || (places.length ? '<p class="muted">Aucun lieu ne correspond à cette recherche.</p>' : '');
   renderStart();
 }
 
@@ -99,6 +105,8 @@ $('#places').addEventListener('change', e => {
   if (p) { p.selected = e.target.checked; save(); }
 });
 $('#places').addEventListener('click', e => {
+  const locate = e.target.closest('[data-locate]');
+  if (locate) beginResolve([places.find(p => p.id === locate.dataset.locate)]);
   const edit = e.target.closest('[data-edit]'), remove = e.target.closest('[data-delete]');
   if (edit) openPlace(places.find(p => p.id === edit.dataset.edit));
   if (remove) {
@@ -123,7 +131,7 @@ $('#place-form').addEventListener('submit', e => {
   if ((fields.lat !== '' || fields.lng !== '') && !coordinates(fields.lat, fields.lng)) { alert('Renseignez une latitude et une longitude valides.'); return; }
   const normalize = (value, field) => unique(field).find(v => v.toLocaleLowerCase('fr') === value.toLocaleLowerCase('fr')) || value;
   const old = places.find(p => p.id === fields.id);
-  const p = { id: old?.id || crypto.randomUUID(), name, country: normalize(country, 'country'), category: normalize(fields.category.trim() || 'À visiter', 'category'), url: fields.url, note: fields.note, tags: fields.tags.trim(), selected: old?.selected ?? true, ...(point || { lat: null, lng: null }) };
+  const p = { id: old?.id || crypto.randomUUID(), name, country: normalize(country, 'country'), category: normalize(fields.category.trim() || 'À visiter', 'category'), url: fields.url, note: fields.note, tags: fields.tags.trim(), selected: old?.selected ?? true, ...(old?.googlePlaceId && point?.lat === old.lat && point?.lng === old.lng ? { googlePlaceId: old.googlePlaceId } : {}), ...(point || { lat: null, lng: null }) };
   if (old) places[places.indexOf(old)] = p; else places.push(p);
   $('#place-dialog').close(); notice(''); save();
 });
@@ -148,14 +156,18 @@ $('#import-form').addEventListener('submit', async e => {
 });
 $('#demo').addEventListener('click', () => { places = structuredClone(demo); save(); notice('Exemple chargé : 10 lieux au Portugal. Choisissez votre durée et créez le parcours.'); });
 function showTrip(record) {
+  currentRecord = record;
+  routeGeneration++;
+  $('#google-routes').disabled = false;
+  $('#google-routes-status').textContent = 'Calcul Google à la demande, hors temps de visite. Les liaisons depuis la dernière visite de la veille sont incluses. Pas de retour ni hébergement. En voiture, trafic au moment du calcul ; ce n’est pas une prévision pour la date du voyage.';
   const trip = planTrip(record.places, record.days, record.startId, record.fileOrder);
   const mode = record.mode;
     $('#result-title').textContent = record.name;
     const km = trip.days.reduce((sum, day) => sum + day.km, 0);
     $('#result-summary').textContent = `${record.places.length} lieux · ${trip.days.length} jours avec des visites · ${trip.fileOrder ? 'Ordre du carnet conservé (sauf le premier lieu si vous en avez choisi un). Aucun tri par proximité ni calcul des distances ou temps de trajet. Google Maps recherchera les étapes par nom et pays si elles n’ont pas de coordonnées : vérifiez chaque correspondance.' : `${Math.round(km)} km à vol d’oiseau entre les étapes.`} ${trip.unusedDays ? `${trip.unusedDays} jour(s) libre(s) pour prolonger les visites ou vous reposer.` : ''} Parcours indicatif, sans hébergement ni retour au point de départ.`;
     $('#day-cards').innerHTML = trip.days.map((day, i) => {
-      const hours = trip.fileOrder ? null : day.km / (mode === 'walking' ? 4 : 35) + day.stops.length * 1.5;
-      return `<article class="day-card"><span class="day-number">JOUR ${String(i + 1).padStart(2, '0')}</span><h3>${escape(day.stops[0].name)}</h3><p class="muted">${day.stops.length} visite(s) · ${trip.fileOrder ? 'ordre du carnet' : `${Math.round(day.km)} km à vol d’oiseau`}</p>${day.previous ? `<p class="small muted">Départ du lien Maps : ${escape(day.previous.name)}, dernière étape de la veille.</p>` : ''}<ol>${day.stops.map(p => `<li>${escape(p.name)}<small>${escape(p.category)}</small>${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Lien Maps enregistré ↗</a>` : ''}</li>`).join('')}</ol><p class="small muted">${trip.fileOrder ? 'Distances et temps de trajet inconnus. Vérifiez les lieux et la faisabilité dans Google Maps.' : `Budget indicatif : ${Math.ceil(hours)} h, avec 1 h 30 par visite et une vitesse théorique de ${mode === 'walking' ? 4 : 35} km/h. Hors pauses, détours et attente.`}</p>${hours > 8 || day.stops.length * 1.5 > 8 ? '<p class="warning">Journée probablement trop chargée. Ajoutez des jours ou retirez des lieux, puis vérifiez les vrais trajets.</p>' : ''}${mapsLinks(day, mode).map((url, j, links) => `<a class="secondary" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Ouvrir dans Maps${links.length > 1 ? ` · partie ${j + 1}` : ''} ↗</a>`).join('')}</article>`;
+      const hours = day.stops.length * 1.5;
+      return `<article class="day-card"><span class="day-number">JOUR ${String(i + 1).padStart(2, '0')}</span><h3>${escape(day.stops[0].name)}</h3><p class="google-day-metric" data-google-day="${i}">Google Maps : kilomètres et durée non calculés</p><p class="muted">${day.stops.length} visite(s) · ${trip.fileOrder ? 'ordre du carnet' : `${Math.round(day.km)} km à vol d’oiseau`}</p>${day.previous ? `<p class="small muted">Départ du lien Maps : ${escape(day.previous.name)}, dernière étape de la veille.</p>` : ''}<ol>${day.stops.map(p => `<li>${escape(p.name)}<small>${escape(p.category)}</small>${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Lien Maps enregistré ↗</a>` : ''}</li>`).join('')}</ol><p class="small muted">Visites seules : environ ${Math.ceil(hours)} h (hypothèse : 1 h 30 par lieu). Le temps Google de déplacement s’ajoute à ce budget.</p>${hours > 8 || day.stops.length * 1.5 > 8 ? '<p class="warning">Journée probablement trop chargée. Ajoutez des jours ou retirez des lieux, puis vérifiez les vrais trajets.</p>' : ''}${mapsLinks(day, mode).map((url, j, links) => `<a class="secondary" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Ouvrir dans Maps${links.length > 1 ? ` · partie ${j + 1}` : ''} ↗</a>`).join('')}</article>`;
     }).join('');
 
   $('#results').dataset.tripId = record.id;
@@ -174,7 +186,7 @@ $('#plan-form').addEventListener('submit', e => {
   } catch (error) { notice(error.message); $('#notice').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
 });
 $('#export').addEventListener('click', () => {
-  const data = { type: 'FeatureCollection', features: places.map(p => ({ type: 'Feature', geometry: coordinates(p.lat, p.lng) ? { type: 'Point', coordinates: [p.lng, p.lat] } : null, properties: { name: p.name, country: p.country, category: p.category, note: p.note, tags: p.tags || '', url: p.url } })) };
+  const data = { type: 'FeatureCollection', features: places.map(p => ({ type: 'Feature', geometry: coordinates(p.lat, p.lng) ? { type: 'Point', coordinates: [p.lng, p.lat] } : null, properties: { name: p.name, country: p.country, category: p.category, note: p.note, tags: p.tags || '', googlePlaceId: p.googlePlaceId || '', url: p.url } })) };
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/geo+json' }));
   const a = document.createElement('a'); a.href = url; a.download = 'voyage-mes-lieux.geojson'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
@@ -212,7 +224,7 @@ $('#trip-folders').addEventListener('click', e => {
     }
     if (remove && confirm(`Supprimer le dossier « ${trip.name} » ? Les lieux de votre carnet seront conservés.`)) {
       storeTrips(trips.filter(t => t.id !== id));
-      if ($('#results').dataset.tripId === id) $('#results').hidden = true;
+      if ($('#results').dataset.tripId === id) { $('#results').hidden = true; currentRecord = null; routeGeneration++; }
       notice(`Le voyage « ${trip.name} » a été supprimé.`);
     }
   } catch (error) { notice(error.message); }
@@ -236,6 +248,125 @@ $('#trip-form').addEventListener('submit', e => {
     storeTrips(trips.map(t => t.id === record.id ? record : t));
     $('#trip-dialog').close(); showTrip(record); notice(`Le voyage « ${record.name} » a été mis à jour.`);
   } catch (error) { alert(error.message); }
+});
+$('#google-api-key').value = googleKey;
+if (googleKey) $('#google-status').textContent = 'Clé disponible dans cette session. Les services seront chargés lors de votre demande.';
+const googleError = error => String(error?.message || 'Google Maps n’a pas répondu.').replaceAll(googleKey || '\u0000', '[clé masquée]');
+function requireGoogle() {
+  if (!googleKey) {
+    $('#google-settings').open = true;
+    throw new Error('Configurez une clé Google Maps Platform dans « Services Google Maps ». Les API Places (New), Routes et Maps JavaScript et la facturation doivent être activées.');
+  }
+  return loadGoogle(googleKey);
+}
+$('#google-config-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  googleKey = $('#google-api-key').value.trim();
+  if (!googleKey) { $('#google-status').textContent = 'Indiquez votre clé de navigateur Google Maps.'; return; }
+  try {
+    try { sessionStorage.setItem('voyage.google.session', googleKey); } catch { /* Kept only in memory. */ }
+    $('#google-status').textContent = 'Chargement de Google Maps…';
+    await requireGoogle();
+    $('#google-status').textContent = 'Bibliothèque Google chargée. Les autorisations Places et Routes seront vérifiées lors de la première requête. Les appels peuvent être facturés.';
+  } catch (error) { $('#google-status').textContent = googleError(error); }
+});
+$('#google-forget').addEventListener('click', () => {
+  googleKey = ''; $('#google-api-key').value = '';
+  try { sessionStorage.removeItem('voyage.google.session'); } catch { /* No stored session. */ }
+  $('#google-status').textContent = 'Clé oubliée. Rechargez la page pour décharger Google Maps ou utiliser une autre clé.';
+});
+async function beginResolve(list, tripId = null) {
+  const queue = list.filter(Boolean).slice(0, 10);
+  if (!queue.length) { notice('Aucun lieu à rechercher. Cochez des lieux sans coordonnées dans la vue actuelle.'); return; }
+  if (!googleKey && queue.some(p => !fromURL(p.url))) {
+    $('#google-settings').open = true;
+    notice('Ces liens contiennent des identifiants Google, pas de coordonnées. Configurez d’abord votre clé dans « Services Google Maps ».');
+    $('#google-settings').scrollIntoView({ behavior: 'smooth' }); return;
+  }
+  resolveQueue = structuredClone(queue); resolveTripId = tripId;
+  $('#resolve-dialog').showModal();
+  await resolveNext();
+}
+async function resolveNext() {
+  const generation = ++resolveGeneration;
+  resolveOptions = []; $('#resolve-candidates').innerHTML = '';
+  if (!resolveQueue.length) {
+    $('#resolve-dialog').close();
+    if (resolveTripId) {
+      const trip = trips.find(t => t.id === resolveTripId);
+      if (trip) showTrip(trip);
+    }
+    notice('Recherche terminée. Les correspondances confirmées ont été enregistrées. Relancez pour traiter les autres lieux si nécessaire.');
+    return;
+  }
+  const p = resolveQueue[0];
+  $('#resolve-title').textContent = `${p.name} · ${resolveQueue.length} lieu(x) restant(s) dans ce lot`;
+  $('#resolve-original').hidden = !savedMapsURL(p.url);
+  $('#resolve-original').href = savedMapsURL(p.url) || '#';
+  $('#resolve-status').textContent = 'Recherche en cours…';
+  try {
+    const embedded = fromURL(p.url);
+    const options = await findGooglePlaces(p, embedded ? null : await requireGoogle());
+    if (generation !== resolveGeneration) return;
+    resolveOptions = options;
+    $('#resolve-status').textContent = options.length ? 'Confirmez la bonne correspondance avant de conserver les coordonnées.' : 'Aucun résultat. Précisez le pays ou le nom avec « Modifier », puis réessayez.';
+    $('#resolve-candidates').innerHTML = options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.name)}</strong><p class="small muted">${escape(o.address)} · ${escape(o.country || 'Pays inconnu')}</p><p class="small muted">${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}${o.exact ? ' · Identifiant Google identique au lien enregistré' : ''}</p>${savedMapsURL(o.url) ? `<a class="place-link" href="${escape(savedMapsURL(o.url))}" target="_blank" rel="noopener noreferrer">Vérifier dans Google Maps ↗</a>` : ''}<button class="secondary" type="button" data-resolve-choice="${i}">Confirmer ce lieu</button></article>`).join('');
+  } catch (error) { if (generation === resolveGeneration) $('#resolve-status').textContent = `${googleError(error)} Vérifiez les API, la facturation, les restrictions ou précisez le pays.`; }
+}
+$('#google-resolve').addEventListener('click', () => beginResolve(filtered().filter(p => p.selected && !coordinates(p.lat, p.lng))));
+$('#google-resolve-trip').addEventListener('click', () => {
+  if (currentRecord) beginResolve(currentRecord.places.filter(p => !coordinates(p.lat, p.lng)), currentRecord.id);
+});
+$('#resolve-skip').addEventListener('click', () => { resolveQueue.shift(); resolveNext(); });
+$('#resolve-close').addEventListener('click', () => $('#resolve-dialog').close());
+$('#resolve-dialog').addEventListener('close', () => { resolveGeneration++; resolveQueue = []; });
+$('#resolve-candidates').addEventListener('click', e => {
+  const button = e.target.closest('[data-resolve-choice]');
+  if (!button) return;
+  const found = resolveOptions[Number(button.dataset.resolveChoice)], original = resolveQueue[0];
+  if (!found || !original) return;
+  const patch = { lat: found.lat, lng: found.lng, country: found.country || original.country, ...(found.placeId ? { googlePlaceId: found.placeId } : {}) };
+  try {
+    if (resolveTripId) {
+      const previous = trips.find(t => t.id === resolveTripId);
+      if (!previous) throw new Error('Ce voyage a été supprimé.');
+      const updated = { ...previous, places: previous.places.map(p => p.id === original.id ? { ...p, ...patch } : p), updatedAt: new Date().toISOString() };
+      storeTrips(trips.map(t => t.id === updated.id ? updated : t));
+      if (currentRecord?.id === updated.id) currentRecord = updated;
+    } else {
+      const next = places.map(p => p.id === original.id ? { ...p, ...patch } : p);
+      localStorage.setItem(key, JSON.stringify(next)); places = next; render();
+      $('#results').hidden = true;
+    }
+    resolveQueue.shift(); resolveNext();
+  } catch (error) { $('#resolve-status').textContent = `Coordonnées non enregistrées : ${googleError(error)}`; }
+});
+$('#google-routes').addEventListener('click', async () => {
+  if (!currentRecord) return;
+  const record = currentRecord, generation = routeGeneration;
+  const trip = planTrip(record.places, record.days, record.startId, record.fileOrder);
+  const button = $('#google-routes'); button.disabled = true;
+  let passed = 0, failed = 0;
+  try {
+    const maps = await requireGoogle();
+    const { Route } = await maps.importLibrary('routes');
+    if (!Route?.computeRoutes) throw new Error('La bibliothèque Routes Google n’est pas disponible. Vérifiez Maps JavaScript API et Routes API.');
+    for (let i = 0; i < trip.days.length; i++) {
+      if (generation !== routeGeneration) return;
+      const target = document.querySelector(`[data-google-day="${i}"]`);
+      target.textContent = 'Calcul Google Maps en cours…';
+      try {
+        const result = await computeGoogleDay(trip.days[i], record.mode, Route);
+        if (generation !== routeGeneration) return;
+        target.textContent = formatGoogleRoute(result); passed++;
+      } catch (error) {
+        if (generation !== routeGeneration) return;
+        target.textContent = `Google Maps indisponible : ${googleError(error)}`; failed++;
+      }
+    }
+    $('#google-routes-status').textContent = `${passed} journée(s) calculée(s), ${failed} non calculée(s). Source : Google Maps, calcul à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}. Temps de déplacement uniquement, hors visites. Liaison depuis la veille incluse ; aucun hébergement ni retour. Les durées peuvent évoluer avec le trafic. Recalculez à votre prochaine visite.`;
+  } catch (error) { if (generation === routeGeneration) $('#google-routes-status').textContent = googleError(error); }
+  finally { if (generation === routeGeneration) button.disabled = false; }
 });
 renderTrips();
 $('#print').addEventListener('click', () => window.print());

@@ -5,6 +5,7 @@ export function coordinates(lat, lng) {
 }
 
 export function fromURL(value) {
+  if (!savedMapsURL(value)) return null;
   try {
     const u = new URL(value);
     // A map camera (@lat,lng) is not necessarily the saved place.
@@ -12,8 +13,21 @@ export function fromURL(value) {
       const m = (u.searchParams.get(key) || '').match(/^(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)$/);
       if (m) return coordinates(m[1], m[2]);
     }
+    const points = [...decodeURIComponent(u.href).matchAll(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/g)];
+    if (points.length === 1) return coordinates(points[0][1], points[0][2]);
   } catch { /* A short URL requires manual coordinates. */ }
   return null;
+}
+
+export function mapsReference(value) {
+  if (!savedMapsURL(value)) return {};
+  try {
+    const u = new URL(value), decoded = decodeURIComponent(u.href);
+    const fid = decoded.match(/!1s0x[0-9a-f]+:(0x[0-9a-f]+)/i);
+    const name = u.pathname.match(/\/place\/([^/]+)/)?.[1];
+    const placeId = u.searchParams.get('query_place_id') || decoded.match(/!1s(ChI[^!/?]+)/)?.[1];
+    return { name: name ? decodeURIComponent(name.replace(/\+/g, ' ')) : '', cid: u.searchParams.get('cid') || (fid ? BigInt(fid[1]).toString() : ''), placeId: placeId || '' };
+  } catch { return {}; }
 }
 
 export function parseCSV(text) {
@@ -43,7 +57,7 @@ export function importPlaces(text, filename, country = '', category = 'À visite
     rows = data.features.map(f => {
       const p = f.properties || {}, location = p.Location || {}, point = f.geometry?.type === 'Point' ? f.geometry.coordinates : [];
       return { title: p.name || p.Title || location['Business Name'], country: p.country || location.Country || country,
-        category: p.category || category, tags: p.tags || '', url: p['Google Maps URL'] || p.url || '', latitude: point[1], longitude: point[0], note: p.Comment || p.note || '' };
+        category: p.category || category, tags: p.tags || '', googleplaceid: p.googlePlaceId || '', url: p['Google Maps URL'] || p.url || '', latitude: point[1], longitude: point[0], note: p.Comment || p.note || '' };
     });
   } else if (/\.csv$/i.test(filename)) rows = parseCSV(text);
   else throw new Error('Choisis un fichier CSV, JSON ou GeoJSON décompressé.');
@@ -51,7 +65,7 @@ export function importPlaces(text, filename, country = '', category = 'À visite
     const url = r.url || r['google maps url'] || '';
     const point = coordinates(r.latitude ?? r.lat, r.longitude ?? r.lng ?? r.lon) || fromURL(url);
     const note = [...new Set([r.note || r.notes, r.commentaire || r.comment].map(v => String(v || '').trim()).filter(Boolean))].join('\n\n');
-    return { name: String(r.titre || r.title || r.name || r.nom || '').trim(), country: String(r.country || r.pays || country).trim(), category: String(r.category || r.catégorie || category).trim(), tags: String(r.tags || '').trim(), note, url: String(url).trim(), ...(point || { lat: null, lng: null }) };
+    return { name: String(r.titre || r.title || r.name || r.nom || '').trim(), country: String(r.country || r.pays || country).trim(), category: String(r.category || r.catégorie || category).trim(), tags: String(r.tags || '').trim(), note, url: String(url).trim(), ...(r.googleplaceid ? { googlePlaceId: String(r.googleplaceid) } : {}), ...(point || { lat: null, lng: null }) };
   }).filter(p => p.name);
   if (!places.length) throw new Error('Aucun lieu reconnu. Colonnes attendues : Titre, Note, URL, Tags, Commentaire (ou Title / name).');
   return places;
