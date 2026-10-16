@@ -1,6 +1,6 @@
 # Voyage
 
-Application web en français pour transformer un carnet de lieux en parcours de voyage. Node.js 22 ou supérieur ; aucune dépendance externe à installer. Les fonctions de carnet et de répartition fonctionnent sans clé ; les recherches et trajets Google nécessitent une configuration Google Maps Platform.
+Application web en français pour transformer un carnet de lieux en parcours de voyage. Node.js 22 ou supérieur ; aucune dépendance externe à installer. Les fonctions de carnet et de répartition fonctionnent sans clé ; la recherche et le calcul gratuits utilisent OpenStreetMap / OSRM, sans clé. L’option Google nécessite sa propre configuration payante.
 
 ```sh
 npm start
@@ -38,7 +38,21 @@ Google ne fournit pas d’API publique pour lire les listes de lieux enregistré
 
 Le parcours utilise une heuristique du plus proche voisin depuis le premier lieu, puis répartit les visites en journées de taille comparable. Il conserve tous les lieux sélectionnés dans le pays demandé, sans garantir un optimum. Les distances sont à vol d’oiseau, y compris les liaisons entre journées ; le budget de visite suppose 1 h 30 par lieu, séparément du temps de déplacement. Les distances à vol d’oiseau sont distinctes des kilomètres renvoyés par Google Routes. Les horaires d’ouverture, ferries, frontières, pauses, hébergements, départ depuis le domicile et retour ne sont pas calculés. Les journées estimées au-delà de 8 h sont signalées. Vérifiez le parcours dans Maps avant de voyager.
 
-## Google Maps : coordonnées et trajets par jour
+## Mode gratuit par défaut — sans compte ni clé
+
+Le site démarre en mode **OpenStreetMap / OSRM**. Aucune clé Google, facturation ou carte bancaire n’est nécessaire. L’option Google reste facultative dans « Itinéraires gratuits » et ne lance aucun appel en mode gratuit.
+
+- **Retrouver un lieu** : cliquez sur « Retrouver le lieu » ou sur la recherche des lieux cochés. Un lieu est traité par action, avec confirmation de l’adresse avant sauvegarde. Le nom du CSV et le pays servent de recherche ; ajoutez la ville au nom via « Modifier » si nécessaire. Les identifiants propres à Google ne sont pas décodables en coordonnées OSM ; les correspondances sont donc toujours à confirmer.
+- **Données** : Nominatim / OpenStreetMap, attribution © OpenStreetMap contributors, licence ODbL. Les coordonnées et pays confirmés sont sauvegardés dans le carnet ou dans le dossier choisi, avec conservation du lien Google d’origine.
+- **Usage des services publics** : pas d’autocomplétion, pas de traitement massif en arrière-plan ; recherches déclenchées par clic. Les requêtes sont sérialisées, espacées d’au moins 1,1 seconde et coordonnées entre onglets avec Web Locks si disponible. Les résultats de recherche sont mis en cache pendant 30 jours. Le navigateur transmet un référent pour identifier le site. Respecter les [conditions Nominatim](https://operations.osmfoundation.org/policies/nominatim/) et celles des serveurs de routage.
+- **Voiture** : serveur public `router.project-osrm.org`, profil driving. **À pied** : serveur piéton FOSSGIS `routing.openstreetmap.de/routed-foot`, profil foot ; aucune durée de voiture n’est présentée comme une durée à pied.
+- **Calcul par jour** : les distances routières (mètres) et durées (secondes) de l’API OSRM sont converties en kilomètres et heures/minutes. La liaison depuis la veille est incluse, hors visites, hébergement et retour. Les parcours longs sont divisés en blocs sans doubler les liaisons. L’ordre des visites est celui du parcours affiché, éventuellement obtenu par l’heuristique de proximité ; ce n’est pas une garantie d’optimum routier.
+- **Limites** : estimations sans trafic en direct, disponibilité et quotas des serveurs publics non garantis. Les refus, trajets impossibles, erreurs réseau et coordonnées manquantes sont signalés. Une seule étape sans déplacement affiche explicitement 0 km ; une erreur ne devient jamais 0 km.
+- **Changer de fournisseur** : les trois adresses HTTPS compatibles Nominatim / OSRM sont modifiables dans les réglages sans changement de code. Les serveurs choisis doivent permettre les requêtes navigateur (CORS). Les lieux concernés sont transmis à ces fournisseurs.
+
+Les tests des réponses API et du navigateur utilisent des données simulées. L’accès aux services publics depuis l’environnement cloud peut être bloqué par son proxy ; cela ne permet pas d’affirmer qu’ils sont accessibles depuis le navigateur de l’utilisateur.
+
+## Google Maps facultatif : coordonnées et trajets par jour
 
 Dans « Services Google Maps », configurez une **clé de navigateur** Google Maps Platform. Créez un projet avec facturation, activez **Maps JavaScript API**, **Places API (New)** et **Routes API**. Limitez la clé aux API concernées et aux référents de votre site, par exemple `https://patfoort47-gif.github.io/*`. Définissez des quotas dans Google Cloud. Pour le développement local, ajoutez explicitement le référent local avec son port si nécessaire. Documentation : [bibliothèque Routes](https://developers.google.com/maps/documentation/javascript/routes/overview), [recherche Places](https://developers.google.com/maps/documentation/javascript/place-search), [protection des clés](https://developers.google.com/maps/api-security-best-practices).
 
