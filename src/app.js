@@ -1,15 +1,30 @@
+import { createTrip, loadTrips, persistTrips } from './trips.js';
 import { coordinates, fromURL, importPlaces, planTrip, mapsLinks, savedMapsURL, demo } from './core.js';
 
 const $ = s => document.querySelector(s);
 const key = 'voyage.places.v1';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 let places = [];
+let trips = [];
+let tripStorageReadable = true;
+let editingPlaces = [];
 function notice(message) { $('#notice').textContent = message; }
 try {
   const saved = JSON.parse(localStorage.getItem(key) || '[]');
   if (!Array.isArray(saved)) throw new Error();
   places = saved.filter(p => p && typeof p.name === 'string').map(p => ({ ...p, id: p.id || crypto.randomUUID(), country: String(p.country || ''), category: String(p.category || 'À visiter'), selected: p.selected !== false }));
 } catch { notice('Le carnet enregistré n’a pas pu être chargé. Vous pouvez importer une sauvegarde.'); }
+
+try { trips = loadTrips(localStorage); }
+catch { tripStorageReadable = false; notice('Les voyages enregistrés ne peuvent pas être lus. Leur sauvegarde est préservée ; vérifiez que le stockage du navigateur est accessible.'); }
+
+function storeTrips(next) {
+  if (!tripStorageReadable) throw new Error('La sauvegarde des voyages est inaccessible. Rechargez la page après avoir vérifié le stockage du navigateur.');
+  try { persistTrips(localStorage, next); }
+  catch { throw new Error('Impossible de sauvegarder les voyages dans ce navigateur. Libérez de l’espace ou autorisez le stockage du site. Aucune modification des voyages n’a été enregistrée.'); }
+  trips = next;
+  renderTrips();
+}
 
 function save() {
   try { localStorage.setItem(key, JSON.stringify(places)); }
@@ -45,6 +60,8 @@ function render() {
   $('#empty').hidden = places.length > 0;
   $('#export').disabled = !places.length;
   const visible = filtered();
+  $('#delete-visible').disabled = !visible.length;
+  $('#delete-visible').textContent = `Supprimer tous les lieux affichés (${visible.length})`;
   $('#places').innerHTML = visible.map(p => `<div class="place"><input type="checkbox" data-select="${escape(p.id)}" aria-label="Sélectionner ${escape(p.name)}" ${p.selected ? 'checked' : ''}><div class="place-icon" aria-hidden="true">${p.category === 'Nature' ? '♧' : '⌁'}</div><div class="place-info"><strong>${escape(p.name)}</strong><p>${escape(p.country || 'Pays à compléter')} · ${escape(p.category)}</p>${!coordinates(p.lat, p.lng) ? '<p class="missing">Sans coordonnées · répartition dans l’ordre disponible</p>' : ''}${p.tags ? `<p>Tags : ${escape(p.tags)}</p>` : ''}${p.note ? `<p class="place-note">${escape(p.note)}</p>` : ''}${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Voir le lieu dans Google Maps ↗</a>` : ''}</div><div class="place-actions"><button class="quiet" data-edit="${escape(p.id)}">Modifier</button><button class="quiet" data-delete="${escape(p.id)}" aria-label="Supprimer ${escape(p.name)}">✕</button></div></div>`).join('') || (places.length ? '<p class="muted">Aucun lieu ne correspond à cette recherche.</p>' : '');
   renderStart();
 }
@@ -69,6 +86,13 @@ $('#bulk-country-form').addEventListener('submit', e => {
 $('#select-all').addEventListener('click', () => {
   const visible = filtered(); const selected = !visible.every(p => p.selected);
   visible.forEach(p => { p.selected = selected; }); save();
+});
+$('#delete-visible').addEventListener('click', () => {
+  const visible = filtered();
+  if (!visible.length || !confirm(`Supprimer les ${visible.length} lieu(x) affichés du carnet, cochés ou non ? Les lieux masqués et les voyages sauvegardés seront conservés.`)) return;
+  const ids = new Set(visible.map(p => p.id));
+  places = places.filter(p => !ids.has(p.id));
+  save(); notice(`${visible.length} lieu(x) supprimé(s) du carnet. Vos voyages sauvegardés sont conservés.`);
 });
 $('#places').addEventListener('change', e => {
   const p = places.find(p => p.id === e.target.dataset.select);
@@ -123,19 +147,30 @@ $('#import-form').addEventListener('submit', async e => {
   finally { button.disabled = false; }
 });
 $('#demo').addEventListener('click', () => { places = structuredClone(demo); save(); notice('Exemple chargé : 10 lieux au Portugal. Choisissez votre durée et créez le parcours.'); });
-$('#plan-form').addEventListener('submit', e => {
-  e.preventDefault();
-  try {
-    const trip = planTrip(candidates(), Number($('#days').value), $('#start').value, $('#file-order').checked);
-    const mode = $('#mode').value;
-    $('#result-title').textContent = `${$('#country').value}, à votre rythme.`;
+function showTrip(record) {
+  const trip = planTrip(record.places, record.days, record.startId, record.fileOrder);
+  const mode = record.mode;
+    $('#result-title').textContent = record.name;
     const km = trip.days.reduce((sum, day) => sum + day.km, 0);
-    $('#result-summary').textContent = `${candidates().length} lieux · ${trip.days.length} jours avec des visites · ${trip.fileOrder ? 'Ordre du carnet conservé (sauf le premier lieu si vous en avez choisi un). Aucun tri par proximité ni calcul des distances ou temps de trajet. Google Maps recherchera les étapes par nom et pays si elles n’ont pas de coordonnées : vérifiez chaque correspondance.' : `${Math.round(km)} km à vol d’oiseau entre les étapes.`} ${trip.unusedDays ? `${trip.unusedDays} jour(s) libre(s) pour prolonger les visites ou vous reposer.` : ''} Parcours indicatif, sans hébergement ni retour au point de départ.`;
+    $('#result-summary').textContent = `${record.places.length} lieux · ${trip.days.length} jours avec des visites · ${trip.fileOrder ? 'Ordre du carnet conservé (sauf le premier lieu si vous en avez choisi un). Aucun tri par proximité ni calcul des distances ou temps de trajet. Google Maps recherchera les étapes par nom et pays si elles n’ont pas de coordonnées : vérifiez chaque correspondance.' : `${Math.round(km)} km à vol d’oiseau entre les étapes.`} ${trip.unusedDays ? `${trip.unusedDays} jour(s) libre(s) pour prolonger les visites ou vous reposer.` : ''} Parcours indicatif, sans hébergement ni retour au point de départ.`;
     $('#day-cards').innerHTML = trip.days.map((day, i) => {
       const hours = trip.fileOrder ? null : day.km / (mode === 'walking' ? 4 : 35) + day.stops.length * 1.5;
       return `<article class="day-card"><span class="day-number">JOUR ${String(i + 1).padStart(2, '0')}</span><h3>${escape(day.stops[0].name)}</h3><p class="muted">${day.stops.length} visite(s) · ${trip.fileOrder ? 'ordre du carnet' : `${Math.round(day.km)} km à vol d’oiseau`}</p>${day.previous ? `<p class="small muted">Départ du lien Maps : ${escape(day.previous.name)}, dernière étape de la veille.</p>` : ''}<ol>${day.stops.map(p => `<li>${escape(p.name)}<small>${escape(p.category)}</small>${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Lien Maps enregistré ↗</a>` : ''}</li>`).join('')}</ol><p class="small muted">${trip.fileOrder ? 'Distances et temps de trajet inconnus. Vérifiez les lieux et la faisabilité dans Google Maps.' : `Budget indicatif : ${Math.ceil(hours)} h, avec 1 h 30 par visite et une vitesse théorique de ${mode === 'walking' ? 4 : 35} km/h. Hors pauses, détours et attente.`}</p>${hours > 8 || day.stops.length * 1.5 > 8 ? '<p class="warning">Journée probablement trop chargée. Ajoutez des jours ou retirez des lieux, puis vérifiez les vrais trajets.</p>' : ''}${mapsLinks(day, mode).map((url, j, links) => `<a class="secondary" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Ouvrir dans Maps${links.length > 1 ? ` · partie ${j + 1}` : ''} ↗</a>`).join('')}</article>`;
     }).join('');
-    notice(''); $('#results').hidden = false; $('#results').scrollIntoView({ behavior: 'smooth' });
+
+  $('#results').dataset.tripId = record.id;
+  $('#results').hidden = false;
+  $('#results').scrollIntoView({ behavior: 'smooth' });
+}
+$('#plan-form').addEventListener('submit', e => {
+  e.preventDefault();
+  try {
+    const days = Number($('#days').value), country = $('#country').value;
+    const record = createTrip({ name: $('#trip-name').value.trim() || `${country} · ${days} jours`, country, days,
+      mode: $('#mode').value, startId: $('#start').value, fileOrder: $('#file-order').checked, places: candidates() });
+    storeTrips([record, ...trips]);
+    showTrip(record);
+    notice(`Le voyage « ${record.name} » est sauvegardé dans « Mes voyages » sur ce navigateur.`);
   } catch (error) { notice(error.message); $('#notice').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
 });
 $('#export').addEventListener('click', () => {
@@ -143,5 +178,65 @@ $('#export').addEventListener('click', () => {
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/geo+json' }));
   const a = document.createElement('a'); a.href = url; a.download = 'voyage-mes-lieux.geojson'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
+function renderTrips() {
+  $('#trip-count').textContent = trips.length;
+  $('#no-trips').hidden = trips.length > 0;
+  $('#trip-folders').innerHTML = trips.map(t => `<article class="trip-folder"><span class="folder-icon" aria-hidden="true">▱</span><h3>${escape(t.name)}</h3><p class="muted">${escape(t.country)} · ${t.days} jours · ${t.places.length} lieux</p><p class="small muted">${t.mode === 'walking' ? 'À pied' : 'En voiture'} · ${t.fileOrder ? 'Ordre du carnet' : 'Par proximité'}</p><div class="folder-actions"><button class="secondary" data-trip-open="${escape(t.id)}">Consulter</button><button class="quiet" data-trip-edit="${escape(t.id)}">Modifier</button><button class="danger-button" data-trip-delete="${escape(t.id)}">Supprimer</button></div></article>`).join('');
+}
+function renderTripEditor() {
+  const form = $('#trip-form'), currentStart = form.elements.startId.value;
+  const selected = editingPlaces.filter(p => p.selected);
+  form.elements.startId.innerHTML = '<option value="">Premier lieu de la sélection</option>' + selected.map(p => `<option value="${escape(p.id)}">${escape(p.name)}</option>`).join('');
+  if (selected.some(p => p.id === currentStart)) form.elements.startId.value = currentStart;
+  $('#edit-trip-places').innerHTML = editingPlaces.map(p => `<label class="trip-place"><input type="checkbox" data-trip-place="${escape(p.id)}" ${p.selected ? 'checked' : ''}><span>${escape(p.name)}</span></label>`).join('');
+  const trip = trips.find(t => t.id === form.elements.id.value);
+  const available = places.filter(p => p.country === trip.country && !editingPlaces.some(q => q.id === p.id || (q.url && q.url === p.url)));
+  $('#trip-add-place').innerHTML = available.map(p => `<option value="${escape(p.id)}">${escape(p.name)}</option>`).join('') || '<option value="">Aucun autre lieu disponible</option>';
+  $('#trip-add').disabled = !available.length;
+}
+$('#trip-folders').addEventListener('click', e => {
+  const open = e.target.closest('[data-trip-open]'), edit = e.target.closest('[data-trip-edit]'), remove = e.target.closest('[data-trip-delete]');
+  const id = open?.dataset.tripOpen || edit?.dataset.tripEdit || remove?.dataset.tripDelete;
+  const trip = trips.find(t => t.id === id);
+  if (!trip) return;
+  try {
+    if (open) { showTrip(trip); notice(''); }
+    if (edit) {
+      const form = $('#trip-form'); form.reset();
+      for (const field of ['id', 'name', 'days', 'mode']) form.elements[field].value = trip[field];
+      form.elements.fileOrder.checked = trip.fileOrder;
+      $('#edit-trip-country').textContent = `Destination : ${trip.country}`;
+      editingPlaces = structuredClone(trip.places).map(p => ({ ...p, selected: true }));
+      renderTripEditor(); form.elements.startId.value = trip.startId;
+      $('#trip-dialog').showModal();
+    }
+    if (remove && confirm(`Supprimer le dossier « ${trip.name} » ? Les lieux de votre carnet seront conservés.`)) {
+      storeTrips(trips.filter(t => t.id !== id));
+      if ($('#results').dataset.tripId === id) $('#results').hidden = true;
+      notice(`Le voyage « ${trip.name} » a été supprimé.`);
+    }
+  } catch (error) { notice(error.message); }
+});
+$('#edit-trip-places').addEventListener('change', e => {
+  const p = editingPlaces.find(p => p.id === e.target.dataset.tripPlace);
+  if (p) { p.selected = e.target.checked; renderTripEditor(); }
+});
+$('#trip-add').addEventListener('click', () => {
+  const p = places.find(p => p.id === $('#trip-add-place').value);
+  if (p && !editingPlaces.some(q => q.id === p.id)) { editingPlaces.push({ ...structuredClone(p), selected: true }); renderTripEditor(); }
+});
+$('#trip-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const form = e.target, previous = trips.find(t => t.id === form.elements.id.value);
+  if (!previous) return;
+  try {
+    const record = createTrip({ name: form.elements.name.value, country: previous.country, days: form.elements.days.value,
+      mode: form.elements.mode.value, startId: form.elements.startId.value, fileOrder: form.elements.fileOrder.checked,
+      places: editingPlaces.filter(p => p.selected) }, previous);
+    storeTrips(trips.map(t => t.id === record.id ? record : t));
+    $('#trip-dialog').close(); showTrip(record); notice(`Le voyage « ${record.name} » a été mis à jour.`);
+  } catch (error) { alert(error.message); }
+});
+renderTrips();
 $('#print').addEventListener('click', () => window.print());
 render();
