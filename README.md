@@ -85,3 +85,13 @@ Dans la fenêtre de validation, modifiez le nom, ajoutez une ville ou une zone e
 Si le lieu est absent des deux moteurs, ouvrez « Lieu introuvable ? Saisir ses coordonnées ». Ouvrez le lien Google Maps original, faites un clic droit sur le point pour copier latitude et longitude, puis validez-les dans les champs dédiés. Cette saisie fonctionne dans le carnet et les voyages sauvegardés, et poursuit la validation rapide si elle est active. L’ajout de contexte sert à la recherche, sans renommer le lieu enregistré.
 
 Le serveur Photon compatible est modifiable dans les réglages, au même titre que Nominatim. Le service public par défaut est `https://photon.komoot.io/api` ; sa disponibilité n’est pas garantie. Les tests avec réponses simulées vérifient le repli, la conversion des résultats et le comportement du cache, pas le taux de correspondance réel sur vos lieux.
+
+## Dates, zone commune et remise à zéro
+
+Les dossiers affichent leur date et heure de création en français (heure de Paris). Une modification conserve cette date ; une ancienne sauvegarde sans date affiche « Date de création inconnue ».
+
+Dans « Lieux sans coordonnées », une zone commune permet de préciser pays et/ou ville pour toutes les recherches suivantes, y compris dans les dossiers. « Appliquer à toutes les recherches » la sauvegarde dans le navigateur ; « Effacer la zone commune » revient au pays propre à chaque lieu. Les champs de la fenêtre restent modifiables pour une exception. Le contexte sert à la recherche et n’écrit aucun pays dans les lieux avant confirmation.
+
+Un compteur persistant en haut du site et un compteur dans la fenêtre de validation indiquent le total de localisations restant à trouver dans le carnet et les dossiers. Les copies indépendantes d’un même lieu sont comptées séparément. Le total se met à jour à chaque validation, import ou suppression.
+
+À la création, le dossier est sauvegardé avant de retirer du carnet les lieux inclus dans ce voyage. Les autres lieux sont conservés, toutes les cases restantes sont décochées et les filtres du carnet sont remis à zéro. Si tous les lieux ont été inclus, le carnet devient vide. Une erreur de sauvegarde du voyage laisse le carnet intact ; si seul le nettoyage du carnet échoue, un message l’indique et le dossier reste disponible. Modifier un dossier existant ne relance pas ce nettoyage.

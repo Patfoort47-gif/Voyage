@@ -2,6 +2,17 @@ import { planTrip } from './core.js';
 
 export const tripsKey = 'voyage.trips.v1';
 
+export function formatTripCreatedAt(value) {
+  const date = new Date(value || '');
+  if (!Number.isFinite(date.getTime())) return 'Date de création inconnue';
+  return `Créé le ${date.toLocaleString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })}`;
+}
+
+export function remainingPlaces(places, trip) {
+  const included = new Set(trip.places.map(p => p.id));
+  return places.filter(p => !included.has(p.id)).map(p => ({ ...p, selected: false }));
+}
+
 export function validateTrip(trip) {
   if (!trip || typeof trip.id !== 'string' || !trip.id || typeof trip.name !== 'string' || !trip.name.trim()
     || typeof trip.country !== 'string' || !trip.country.trim() || !['driving', 'walking'].includes(trip.mode)

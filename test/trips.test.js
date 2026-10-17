@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTrip, loadTrips, persistTrips, tripsKey } from '../src/trips.js';
+import { createTrip, loadTrips, persistTrips, tripsKey, formatTripCreatedAt, remainingPlaces } from '../src/trips.js';
 import { demo, planTrip } from '../src/core.js';
 
 const input = () => ({ name: ' Portugal en famille ', country: 'Portugal', days: 5, mode: 'driving', fileOrder: false, startId: 'demo-2', places: structuredClone(demo) });
@@ -8,6 +8,23 @@ const memoryStorage = () => {
   const data = new Map();
   return { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
 };
+
+test('date de dossier : affichage français en heure de Paris et ancienne date absente', () => {
+  assert.ok(formatTripCreatedAt('2026-10-16T23:30:00Z').includes('17 octobre 2026'));
+  assert.ok(formatTripCreatedAt('2026-10-16T23:30:00Z').includes('01:30'));
+  assert.equal(formatTripCreatedAt(null), 'Date de création inconnue');
+});
+
+test('création : retrait des lieux du voyage, sélection remise à zéro et autres lieux préservés', () => {
+  const places = structuredClone(demo);
+  const trip = createTrip({ ...input(), places: places.slice(0, 3) });
+  const rest = remainingPlaces(places, trip);
+  assert.equal(rest.length, 7);
+  assert.ok(rest.every(p => p.selected === false));
+  assert.deepEqual(rest.map(p => p.id), places.slice(3).map(p => p.id));
+  assert.equal(trip.places.length, 3); assert.equal(places.length, 10);
+  assert.deepEqual(remainingPlaces(places, createTrip(input())), []);
+});
 
 test('un voyage sauvegardé possède une copie indépendante du carnet', () => {
   const original = input(), trip = createTrip(original), storage = memoryStorage();

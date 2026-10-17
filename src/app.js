@@ -1,6 +1,6 @@
 import { findFreePlaces, computeFreeDay, formatFreeRoute, readServices, serviceURL } from './free-maps.js';
 import { loadGoogle, findGooglePlaces, computeGoogleDay, formatGoogleRoute } from './google-maps.js';
-import { createTrip, loadTrips, persistTrips } from './trips.js';
+import { createTrip, loadTrips, persistTrips, formatTripCreatedAt, remainingPlaces } from './trips.js';
 import { coordinates, fromURL, importPlaces, planTrip, mapsLinks, savedMapsURL, demo } from './core.js';
 
 const $ = s => document.querySelector(s);
@@ -17,6 +17,8 @@ try { mapsProvider = localStorage.getItem('voyage.maps.provider') === 'google' ?
 let googleKey = '';
 try { googleKey = sessionStorage.getItem('voyage.google.session') || ''; } catch { /* Memory-only configuration remains available. */ }
 let resolveQueue = [], resolveOptions = [], resolveTripId = null, resolveGeneration = 0;
+let searchContext = { country: '', city: '' };
+try { const saved = JSON.parse(localStorage.getItem('voyage.search.context') || '{}'); searchContext = { country: String(saved.country || ''), city: String(saved.city || '') }; } catch {}
 let missingWorkflow = false;
 let missingSkipped = new Set();
 function notice(message) { $('#notice').textContent = message; }
@@ -188,8 +190,15 @@ $('#plan-form').addEventListener('submit', e => {
     const record = createTrip({ name: $('#trip-name').value.trim() || `${country} · ${days} jours`, country, days,
       mode: $('#mode').value, startId: $('#start').value, fileOrder: $('#file-order').checked, places: candidates() });
     storeTrips([record, ...trips]);
+    let cleanupFailed = false;
+    try {
+      const remaining = remainingPlaces(places, record);
+      localStorage.setItem(key, JSON.stringify(remaining)); places = remaining;
+      $('#search').value = ''; $('#category').value = ''; $('#trip-name').value = '';
+      render();
+    } catch { cleanupFailed = true; }
     showTrip(record);
-    notice(`Le voyage « ${record.name} » est sauvegardé dans « Mes voyages » sur ce navigateur.`);
+    notice(`Le voyage « ${record.name} » est sauvegardé. ${cleanupFailed ? 'Le carnet n’a pas pu être remis à zéro : vos lieux y restent pour éviter une perte de données.' : 'Les lieux inclus ont été retirés du carnet et la sélection a été remise à zéro. Les autres lieux sont conservés.'}`);
   } catch (error) { notice(error.message); $('#notice').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
 });
 $('#export').addEventListener('click', () => {
@@ -200,7 +209,7 @@ $('#export').addEventListener('click', () => {
 function renderTrips() {
   $('#trip-count').textContent = trips.length;
   $('#no-trips').hidden = trips.length > 0;
-  $('#trip-folders').innerHTML = trips.map(t => `<article class="trip-folder"><span class="folder-icon" aria-hidden="true">▱</span><h3>${escape(t.name)}</h3><p class="muted">${escape(t.country)} · ${t.days} jours · ${t.places.length} lieux</p><p class="small muted">${t.mode === 'walking' ? 'À pied' : 'En voiture'} · ${t.fileOrder ? 'Ordre du carnet' : 'Par proximité'}</p><div class="folder-actions"><button class="secondary" data-trip-open="${escape(t.id)}">Consulter</button><button class="quiet" data-trip-edit="${escape(t.id)}">Modifier</button><button class="danger-button" data-trip-delete="${escape(t.id)}">Supprimer</button></div></article>`).join('');
+  $('#trip-folders').innerHTML = trips.map(t => `<article class="trip-folder"><span class="folder-icon" aria-hidden="true">▱</span><h3>${escape(t.name)}</h3><p class="trip-date small muted">${escape(formatTripCreatedAt(t.createdAt))}</p><p class="muted">${escape(t.country)} · ${t.days} jours · ${t.places.length} lieux</p><p class="small muted">${t.mode === 'walking' ? 'À pied' : 'En voiture'} · ${t.fileOrder ? 'Ordre du carnet' : 'Par proximité'}</p><div class="folder-actions"><button class="secondary" data-trip-open="${escape(t.id)}">Consulter</button><button class="quiet" data-trip-edit="${escape(t.id)}">Modifier</button><button class="danger-button" data-trip-delete="${escape(t.id)}">Supprimer</button></div></article>`).join('');
 }
 function renderTripEditor() {
   const form = $('#trip-form'), currentStart = form.elements.startId.value;
@@ -321,12 +330,32 @@ function visibleMissing() {
 }
 function renderMissing() {
   const all = missingEntries(), visible = visibleMissing();
+  $('#resolve-progress').textContent = `${all.length} localisation(s) restant à trouver au total · ${places.filter(p => !coordinates(p.lat, p.lng)).length} dans le carnet · ${all.filter(e => e.tripId).length} dans les voyages`;
+  $('#remaining-total').textContent = `${all.length} localisation(s) restant à trouver · carnet et voyages sauvegardés`;
   $('#missing-locations').hidden = !all.length;
   $('#missing-count').textContent = all.length;
   $('#missing-visible').textContent = `${visible.length} lieu(x) affiché(s) sur ${all.length} à compléter`;
   $('#missing-review').disabled = !visible.length;
   $('#missing-list').innerHTML = visible.map(e => `<article class="missing-location"><div><strong>${escape(e.place.name)}</strong><p class="small muted">${escape(e.place.country || 'Pays à préciser')} · ${escape(e.context)}</p></div><button class="secondary" type="button" data-missing-id="${escape(e.place.id)}" data-missing-trip="${escape(e.tripId || '')}">Rechercher et valider</button></article>`).join('') || '<p class="muted">Aucun lieu ne correspond à ce filtre.</p>';
 }
+function renderSearchContext() {
+  $('#search-context-country').value = searchContext.country;
+  $('#search-context-city').value = searchContext.city;
+  $('#search-context-status').textContent = searchContext.country || searchContext.city ? `Zone active : ${[searchContext.city, searchContext.country].filter(Boolean).join(', ')}` : 'Aucune zone commune. Le pays propre à chaque lieu sera utilisé.';
+}
+renderSearchContext();
+$('#search-context-form').addEventListener('submit', e => {
+  e.preventDefault();
+  searchContext = { country: $('#search-context-country').value.trim(), city: $('#search-context-city').value.trim() };
+  try { localStorage.setItem('voyage.search.context', JSON.stringify(searchContext)); }
+  catch { notice('Zone appliquée pour cette session, mais non sauvegardée par le navigateur.'); }
+  renderSearchContext();
+});
+$('#search-context-clear').addEventListener('click', () => {
+  searchContext = { country: '', city: '' };
+  try { localStorage.removeItem('voyage.search.context'); } catch {}
+  renderSearchContext();
+});
 $('#missing-search').addEventListener('input', renderMissing);
 $('#missing-review').addEventListener('click', () => {
   const first = visibleMissing()[0];
@@ -372,16 +401,17 @@ async function resolveNext(refineSearch = false) {
   $('#resolve-search-engine').closest('label').hidden = mapsProvider !== 'free';
   if (!refineSearch) {
     $('#resolve-search-name').value = p.name;
-    $('#resolve-search-city').value = '';
-    $('#resolve-search-country').value = p.country || '';
+    $('#resolve-search-city').value = searchContext.city;
+    $('#resolve-search-country').value = searchContext.country || p.country || '';
     $('#resolve-search-engine').value = 'auto';
     $('#resolve-manual-form').reset();
-    $('#resolve-manual-form').elements.country.value = p.country || '';
+    $('#resolve-manual-form').elements.country.value = searchContext.country || p.country || '';
     $('#resolve-manual').open = false;
   }
   const searchPlace = { ...p, searchName: $('#resolve-search-name').value.trim(), searchCity: $('#resolve-search-city').value.trim(), country: $('#resolve-search-country').value.trim(), searchEngine: $('#resolve-search-engine').value };
   if (refineSearch) searchPlace.url = '';
-  $('#resolve-title').textContent = `${p.name} · ${resolveQueue.length} lieu(x) restant(s) dans ce lot`;
+  $('#resolve-title').textContent = p.name;
+  renderMissing();
   $('#resolve-original').hidden = !savedMapsURL(p.url);
   $('#resolve-original').href = savedMapsURL(p.url) || '#';
   $('#resolve-status').textContent = 'Recherche en cours…';
