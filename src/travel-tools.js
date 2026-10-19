@@ -1,3 +1,4 @@
+import { clothingItems } from './packing-clothes.js';
 import { extraCurrencies } from './destination-currency.js';
 import { coordinates } from './core.js';
 
@@ -68,7 +69,7 @@ export async function fetchWeather(place, start, days, fetcher = fetch, today = 
   if (rows.some(row=>!dateForDay(row.date,1) || row.date<first || row.date>last)) throw new Error('Dates météo incohérentes.');
   return {location:place.name,lat:place.lat,lng:place.lng,fetchedAt:new Date().toISOString(),start:first,end:last,partial:last<end,days:rows};
 }
-export function packingItems(packing) {
+export function packingItems(packing,days=5) {
   const items = [
     {id:'identity',label:'Pièce d’identité, billets et réservations',why:'Les essentiels'},
     {id:'payment',label:'Moyen de paiement et assurance',why:'Les essentiels'},
@@ -76,6 +77,7 @@ export function packingItems(packing) {
     {id:'phone',label:'Téléphone, chargeur et carte hors connexion',why:'Les essentiels'},
     {id:'water',label:'Gourde et protection solaire',why:'Les essentiels'}
   ];
+  items.push(...clothingItems(packing,days));
   const add = (id,label,why)=>items.push({id,label,why});
   if (packing.running || packing.hiking) add('sport-hydration','Réserve d’eau et en-cas adaptés à la durée de la sortie','Activité sportive');
   if (packing.running) { add('run-shoes','Chaussures et tenue de course','Course prévue'); add('run-light','Éclairage ou éléments réfléchissants','Course tôt ou tard'); }
@@ -128,6 +130,7 @@ export function validateOrganizer(data) {
     }
   }
   if(data.sites!==undefined) { if(!object(data.sites))fail(); for(const entry of Object.values(data.sites))if(!object(entry)||!url(entry.url)||!url(entry.source)||!text(entry.name,300)||!coordinates(entry.lat,entry.lng)||!Number.isFinite(Date.parse(entry.checkedAt)))fail(); }
+  if(data.ticketPlaces!==undefined && (!object(data.ticketPlaces)||Object.values(data.ticketPlaces).some(value=>!['ticket','none','auto'].includes(value))))fail();
   if(data.budget!==undefined) {
     const b=data.budget;if(!object(b)||!currency(b.currency)||!number(b.dailyLimit)||!list(b.expenses)||!object(b.rates)||!object(b.rates.values)||!text(b.rates.source,150)||!text(b.rates.date,10)||b.rates.date&&!dateForDay(b.rates.date,1))fail();
     for(const [code,value] of Object.entries(b.rates.values))if(!/^[A-Z]{3}$/.test(code)||!number(value)||value<=0||code==='EUR'&&value!==1)fail();
@@ -140,6 +143,7 @@ export function validateOrganizer(data) {
     for(const [key,value] of Object.entries(p.checked))if(!identifier(key)||typeof value!=='boolean')fail();
     const ids=new Set();
     for(const item of p.manual) {if(!object(item)||!identifier(item.id)||ids.has(item.id)||!text(item.label,180)||!item.label.trim())fail();ids.add(item.id);}
+    if(p.laundryEvery!==undefined && ![0,3,5,7].includes(p.laundryEvery))fail();
     if(p.placeId!==undefined && !text(p.placeId,200))fail();
     if(p.autoWeather!==undefined && typeof p.autoWeather!=='boolean')fail();
     if(p.weather) {
