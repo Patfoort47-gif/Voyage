@@ -1,3 +1,5 @@
+import { documentFile } from './travel-files.js';
+import { Organizer, travelPages } from './organizer.js';
 import { flagMarkup } from './country-flags.js';
 import { destinationTheme, themeStyle, themeIllustration } from './destination-theme.js';
 import { prepareDescription } from './descriptions.js';
@@ -20,6 +22,13 @@ let tripStorageReadable = true;
 let editingPlaces = [];
 let currentRecord = null;
 const tripMap = new TripMap();
+const organizer = new Organizer($('#trip-organizer-page'), {
+  getTrip: id => trips.find(t => t.id === id),
+  saveTrip: updated => {
+    storeTrips(trips.map(t => t.id === updated.id ? updated : t));
+    if (currentRecord?.id === updated.id) currentRecord = updated;
+  }
+});
 let mapReady = Promise.resolve();
 let articleOptions = [], articleSource = '', articleGeneration = 0;
 let routeGeneration = 0;
@@ -207,12 +216,17 @@ function setDestination(theme) {
   for (const field of ['accent', 'dark', 'soft', 'highlight']) document.body.style.setProperty('--destination-' + (field === 'highlight' ? 'pop' : field), theme[field]);
   document.body.dataset.destination = theme.id;
 }
-function showTrip(record) {
+function showTrip(record, page = 'route') {
+  if (!Object.hasOwn(travelPages, page)) page = 'route';
   currentRecord = record;
   const theme = destinationTheme(record);
   setDestination(theme); setNav('trips');
   $('#trips-page').hidden = true;
   $('#trip-destination-banner').innerHTML = `<div class="destination-banner" style="${themeStyle(theme)}"><div class="destination-banner-copy"><span class="destination-chip">${flagMarkup(record.country)}${escape(record.country)}</span><h2>${escape(record.name)}</h2><p>${escape(theme.label)}</p><div class="destination-pills"><span>◷ ${record.days} jours</span><span>⌁ ${record.places.length} étape${record.places.length > 1 ? 's' : ''}</span><span>${record.mode === 'walking' ? 'À pied' : 'En voiture'}</span></div></div>${themeIllustration(theme)}</div>`;
+  $('#trip-tools-nav').innerHTML = Object.entries(travelPages).map(([key, label]) => `<a href="#voyage=${encodeURIComponent(record.id)}&page=${key}" ${page === key ? 'aria-current="page"' : ''}>${label}</a>`).join('');
+  $('#trip-route-page').hidden = page !== 'route';
+  $('#trip-organizer-page').hidden = page === 'route';
+  if (page !== 'route') organizer.mount(record, page); else organizer.leave();
   const key = routeKeyFor(record);
   if (displayedRouteKey !== key) routeGeneration++;
   displayedRouteKey = key;
@@ -234,12 +248,12 @@ function showTrip(record) {
   $('#results').hidden = false;
   document.body.dataset.view = 'trip';
   document.title = record.name + ' — Voyage';
-  const hash = '#voyage=' + encodeURIComponent(record.id);
+  const hash = '#voyage=' + encodeURIComponent(record.id) + (page === 'route' ? '' : '&page=' + page);
   if (location.hash !== hash) history.pushState(null, '', hash);
   cached.days.forEach((day, i) => { const target = document.querySelector(`[data-google-day="${i}"]`); if (target) target.textContent = day.text; });
   if (cached.status) $('#google-routes-status').textContent = cached.status;
-  mapReady = tripMap.show(trip).then(() => cached.days.forEach((day, i) => { if (day.result?.geometry) tripMap.setRoute(i, day.result.geometry); }));
-  if (!cached.attempted && activeRouteKey !== key) calculateRoutes();
+  if (page === 'route') mapReady = tripMap.show(trip).then(() => cached.days.forEach((day, i) => { if (day.result?.geometry) tripMap.setRoute(i, day.result.geometry); }));
+  if (page === 'route' && !cached.attempted && activeRouteKey !== key) calculateRoutes();
   $('#results').scrollIntoView({ behavior: 'smooth' });
 }
 $('#plan-form').addEventListener('submit', e => {
@@ -366,6 +380,7 @@ $('#trip-folders').addEventListener('click', e => {
     }
     if (remove && confirm(`Supprimer le dossier « ${trip.name} » ? Les lieux de votre carnet seront conservés.`)) {
       storeTrips(trips.filter(t => t.id !== id));
+      for (const booking of trip.organizer?.bookings || []) if (booking.attachment) documentFile('delete', booking.attachment.id).catch(() => {});
       if ($('#results').dataset.tripId === id) { $('#results').hidden = true; currentRecord = null; routeGeneration++; location.hash = '#voyages'; }
       notice(`Le voyage « ${trip.name} » a été supprimé.`);
     }
@@ -656,12 +671,14 @@ $('#description-dialog').addEventListener('close', () => {
   if (trip && currentRecord?.id === trip.id) showTrip(trip);
 });
 function showHome(prepare = false) {
+  organizer.leave();
   document.body.dataset.view = 'home'; $('#results').hidden = true; $('#trips-page').hidden = true;
   setDestination(destinationTheme()); setNav(prepare ? 'prepare' : 'home');
   document.title = 'Voyage — Vos envies, un itinéraire';
   if (prepare) $('#carnet').scrollIntoView({ behavior: 'smooth', block: 'start' }); else window.scrollTo({ top: 0 });
 }
 function showTrips() {
+  organizer.leave();
   document.body.dataset.view = 'trips'; $('#results').hidden = true; $('#trips-page').hidden = false;
   setDestination(destinationTheme()); setNav('trips'); renderTrips();
   document.title = 'Mes voyages — Voyage'; window.scrollTo({ top: 0 });
@@ -670,9 +687,9 @@ function restorePage() {
   if (['#voyages', '#my-trips'].includes(location.hash)) { showTrips(); return; }
   if (location.hash === '#carnet') { showHome(true); return; }
   if (location.hash.startsWith('#voyage=')) {
-    let id; try { id = decodeURIComponent(location.hash.slice(8)); } catch { showHome(); return; }
-    const trip = trips.find(t => t.id === id);
-    if (trip) { showTrip(trip); return; }
+    const params = new URLSearchParams(location.hash.slice(1));
+    const trip = trips.find(t => t.id === params.get('voyage'));
+    if (trip) { showTrip(trip, params.get('page') || 'route'); return; }
   }
   showHome();
 }

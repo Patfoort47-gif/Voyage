@@ -1,3 +1,4 @@
+import { validateOrganizer } from './travel-tools.js';
 import { planTrip } from './core.js';
 
 export const tripsKey = 'voyage.trips.v1';
@@ -30,6 +31,7 @@ export function validateTrip(trip) {
     || new Set(trip.places.map(p => p.id)).size !== trip.places.length) {
     throw new Error('Les données de ce voyage sont invalides.');
   }
+  if (trip.organizer !== undefined) validateOrganizer(trip.organizer);
   planTrip(trip.places, trip.days, trip.startId, trip.fileOrder);
   return trip;
 }
@@ -39,8 +41,10 @@ export function createTrip(input, previous = null) {
   const trip = {
     id: previous?.id || crypto.randomUUID(), name: input.name.trim(), country: input.country.trim(),
     days: Number(input.days), mode: input.mode, fileOrder: Boolean(input.fileOrder), startId: input.startId || '',
+    ...(previous?.organizer ? { organizer: structuredClone(previous.organizer) } : {}),
     places: structuredClone(input.places), createdAt: previous?.createdAt || now, updatedAt: now
   };
+  if (previous?.days !== undefined && previous.days !== trip.days && trip.organizer?.packing) delete trip.organizer.packing.weather;
   return validateTrip(trip);
 }
 
