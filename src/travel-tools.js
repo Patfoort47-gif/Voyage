@@ -115,6 +115,7 @@ export function validateOrganizer(data) {
   const identifier = value => text(value,100)&&/^[a-zA-Z0-9_-]+$/.test(value);
   const url = value => !value || text(value,3000)&&!!safeLink(value);
   if(!object(data))fail();
+  if(data.templateProfile!==undefined && !['urban-cold','urban-mild','nature-road','coast'].includes(data.templateProfile))fail();
   if(data.startDate!==undefined && (!text(data.startDate,10) || data.startDate&&!dateForDay(data.startDate,1)))fail();
   for(const key of ['bookings','offers']) {
     if(data[key]!==undefined && !list(data[key],key==='bookings'?Infinity:1000))fail();
@@ -146,6 +147,7 @@ export function validateOrganizer(data) {
     for(const [key,value] of Object.entries(p.checked))if(!identifier(key)||typeof value!=='boolean')fail();
     const ids=new Set();
     for(const item of p.manual) {if(!object(item)||!identifier(item.id)||ids.has(item.id)||!text(item.label,180)||!item.label.trim())fail();ids.add(item.id);}
+    if(p.profile!==undefined && !['urban-cold','urban-mild','nature-road','coast'].includes(p.profile))fail();
     if(p.laundryEvery!==undefined && ![0,3,5,7].includes(p.laundryEvery))fail();
     if(p.placeId!==undefined && !text(p.placeId,200))fail();
     if(p.autoWeather!==undefined && typeof p.autoWeather!=='boolean')fail();

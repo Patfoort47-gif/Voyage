@@ -1,3 +1,6 @@
+import { MapsImport } from './maps-import-ui.js';
+import { DayGroups } from './day-groups-ui.js';
+import { tripTemplates, templateOrganizer } from './trip-templates.js';
 import { setupPWA } from './pwa.js';
 import { workspaceBackup, readBackup, prepareImportedBackup, itineraryCopy, downloadFile } from './backups.js';
 import { tripInsights, stepTracker, taskList } from './trip-insights.js';
@@ -24,6 +27,8 @@ let places = [];
 let placeStorageReadable = true;
 let trips = [];
 let tripStorageReadable = true;
+let pendingTemplate=null;
+try{const value=JSON.parse(localStorage.getItem('voyage.template-draft.v1')||'null');if(value&&tripTemplates[value.profile]&&typeof value.country==='string'&&Number.isInteger(value.days)&&value.days>=1&&value.days<=30&&Number.isFinite(value.dailyLimit)&&value.dailyLimit>=0)pendingTemplate=value;}catch{}
 let editingPlaces = [];
 let currentRecord = null;
 const tripMap = new TripMap();
@@ -239,12 +244,13 @@ function showTrip(record, page = 'route') {
   const cached = routeCache.get(key);
   $('#google-routes').disabled = activeRouteKey === key;
   $('#google-routes-status').textContent = `Calcul à la demande, hors visites. Liaison depuis la veille incluse ; aucun hébergement ni retour. Source : OpenStreetMap / OSRM. Estimation sans trafic en temps réel.`;
-  const trip = planTrip(record.places, record.days, record.startId, record.fileOrder);
+  const trip = planTrip(record.places, record.days, record.startId, record.fileOrder, record.dayGroups);
   $('#trip-insights').innerHTML=tripInsights(record);
+  $('#reset-day-groups').hidden=!record.dayGroups;
   const mode = record.mode;
     $('#result-title').textContent = record.name;
     const km = trip.days.reduce((sum, day) => sum + day.km, 0);
-    $('#result-summary').textContent = `${record.places.length} lieux · ${trip.days.length} jours avec des visites · ${trip.fileOrder ? 'Ordre du carnet conservé (sauf le premier lieu si vous en avez choisi un). Aucun tri par proximité ni calcul des distances ou temps de trajet. Google Maps recherchera les étapes par nom et pays si elles n’ont pas de coordonnées : vérifiez chaque correspondance.' : `${Math.round(km)} km à vol d’oiseau entre les étapes. Tri par proximité et 2-opt${trip.kmSaved>=0.1?` : environ ${trip.kmSaved.toFixed(1)} km de détours géographiques évités`:''}. Ce tri ne minimise pas les temps routiers.`} ${trip.unusedDays ? `${trip.unusedDays} jour(s) libre(s) pour prolonger les visites ou vous reposer.` : ''} Parcours indicatif, sans hébergement ni retour au point de départ.`;
+    $('#result-summary').textContent = `${record.places.length} lieux · ${trip.days.length} jours avec des visites · ${trip.fileOrder ? 'Ordre du carnet conservé (sauf le premier lieu si vous en avez choisi un). Aucun tri par proximité ni calcul des distances ou temps de trajet. Google Maps recherchera les étapes par nom et pays si elles n’ont pas de coordonnées : vérifiez chaque correspondance.' : `${Math.round(km)} km à vol d’oiseau entre les étapes. ${trip.grouped?'Journées par zones et ordre des étapes confirmés':'Tri par proximité et 2-opt'}${trip.kmSaved>=0.1?` : environ ${trip.kmSaved.toFixed(1)} km de détours géographiques évités`:''}. Ce tri ne minimise pas les temps routiers.`} ${trip.unusedDays ? `${trip.unusedDays} jour(s) libre(s) pour prolonger les visites ou vous reposer.` : ''} Parcours indicatif, sans hébergement ni retour au point de départ.`;
     $('#day-cards').innerHTML = trip.days.map((day, i) => {
       const hours = day.stops.length * 1.5;
       return `<article class="day-card"><span class="day-number">JOUR ${String(i + 1).padStart(2, '0')}</span><h3>${escape(day.stops[0].name)}</h3><p class="google-day-metric" data-google-day="${i}">Trajet : kilomètres et durée non calculés</p><p class="muted">${day.stops.length} visite(s) · ${trip.fileOrder ? 'ordre du carnet' : `${Math.round(day.km)} km à vol d’oiseau`}</p>${day.previous ? `<p class="small muted">Départ du lien Maps : ${escape(day.previous.name)}, dernière étape de la veille.</p>` : ''}<ol>${day.stops.map(p => `<li><strong>${escape(p.name)}</strong><small>${escape(p.category)}</small><div class="place-details">${p.description ? `<p>${escape(p.description)}</p>` : '<p class="muted small">Descriptif non renseigné. Ajoutez une fiche ou vos informations.</p>'}${wikipediaLink(p.descriptionSource) ? `<a class="place-link" href="${escape(wikipediaLink(p.descriptionSource))}" target="_blank" rel="noopener noreferrer">Source : Wikipédia · CC BY-SA →</a>` : ''}${p.address ? `<p><strong>Adresse :</strong> ${escape(p.address)}</p>` : ''}${p.practicalInfo ? `<p><strong>À savoir :</strong> ${escape(p.practicalInfo)}</p>` : ''}<p data-place-note="${escape(p.id)}" ${p.note?'':'hidden'}><strong>Vos notes :</strong> <span>${escape(p.note||'')}</span></p>${stepTracker(p)}</div><div class="place-tools"><button type="button" class="quiet" data-folder-place="${escape(p.id)}">Modifier ce lieu / informations</button><button type="button" class="quiet" data-folder-locate="${escape(p.id)}">Corriger la localisation</button></div>${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Lien Maps enregistré →</a>` : ''}</li>`).join('')}</ol><p class="small muted">Visites seules : environ ${Math.ceil(hours)} h (hypothèse : 1 h 30 par lieu). Le temps de déplacement calculé s’ajoute à ce budget.</p>${hours > 8 || day.stops.length * 1.5 > 8 ? '<p class="warning">Journée probablement trop chargée. Ajoutez des jours ou retirez des lieux, puis vérifiez les vrais trajets.</p>' : ''}${mapsLinks(day, mode).map((url, j, links) => `<a class="secondary" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Ouvrir dans Maps${links.length > 1 ? ` · partie ${j + 1}` : ''} →</a>`).join('')}</article>`;
@@ -267,8 +273,9 @@ $('#plan-form').addEventListener('submit', e => {
   try {
     const days = Number($('#days').value), country = $('#country').value;
     const record = createTrip({ name: $('#trip-name').value.trim() || `${country} · ${days} jours`, country, days,
-      mode: $('#mode').value, startId: $('#start').value, fileOrder: $('#file-order').checked, places: candidates() });
+      mode: $('#mode').value, startId: $('#start').value, fileOrder: $('#file-order').checked, ...(pendingTemplate?{organizer:templateOrganizer(pendingTemplate.profile,pendingTemplate.startDate,pendingTemplate.dailyLimit)}:{}), places: candidates() });
     storeTrips([record, ...trips]);
+    pendingTemplate=null;try{localStorage.removeItem('voyage.template-draft.v1');}catch{}$('#template-active').textContent='';
     let cleanupFailed = false;
     try {
       const remaining = remainingPlaces(places, record);
@@ -575,7 +582,7 @@ async function calculateRoutes(force = false) {
   const cached = routeCache.get(key);
   if (!cached || (cached.attempted && !force)) return;
   cached.attempted = true; activeRouteKey = key;
-  const trip = planTrip(record.places, record.days, record.startId, record.fileOrder);
+  const trip = planTrip(record.places, record.days, record.startId, record.fileOrder, record.dayGroups);
   $('#google-routes').disabled = true;
   let passed = 0, failed = 0;
   try {
@@ -768,3 +775,26 @@ $('#backup-import').addEventListener('change',async event=>{
   }catch(error){if(imported&&!committed)await imported.rollback();notice('Import impossible : '+error.message);}finally{input.disabled=false;input.value='';}
 });
 setupPWA();
+
+const mapsImporter=new MapsImport($('#maps-import-dialog'),{
+  getPlaces:()=>places,
+  addPlaces:added=>{if(!placeStorageReadable)throw new Error('Le carnet enregistré est illisible et est préservé.');const next=[...places,...added];localStorage.setItem(key,JSON.stringify(next));places=next;render();location.hash='#carnet';},notice
+});
+$('#maps-import-open').addEventListener('click',()=>mapsImporter.open());
+const dayGroups=new DayGroups($('#day-groups-dialog'),{getTrip:id=>trips.find(t=>t.id===id),saveTrip:updated=>storeTrips(trips.map(t=>t.id===updated.id?updated:t)),showTrip,notice});
+$('#propose-day-groups').addEventListener('click',()=>{if(currentRecord)dayGroups.open(currentRecord);});
+$('#reset-day-groups').addEventListener('click',()=>{if(currentRecord){const updated={...currentRecord,dayGroups:null,updatedAt:new Date().toISOString()};storeTrips(trips.map(t=>t.id===updated.id?updated:t));showTrip(updated);notice('Tri automatique restauré.');}});
+$('#template-profile').innerHTML=Object.entries(tripTemplates).map(([id,t])=>`<option value="${id}">${escape(t.name)}</option>`).join('');
+function showTemplateDefaults(){const t=tripTemplates[$('#template-profile').value],form=$('#template-form');form.elements.days.value=t.days;form.elements.dailyLimit.value=t.dailyLimit;$('#template-description').textContent=t.description;}
+$('#template-profile').addEventListener('change',showTemplateDefaults);
+$('#template-open').addEventListener('click',()=>{showTemplateDefaults();$('#template-form').elements.country.value=$('#country').value||'';$('#template-dialog').showModal();});
+$('#template-close').addEventListener('click',()=>$('#template-dialog').close());
+function applyTemplateDraft() {
+  if(!pendingTemplate)return;const t=tripTemplates[pendingTemplate.profile];
+  if(![...$('#country').options].some(o=>o.value===pendingTemplate.country))$('#country').add(new Option(pendingTemplate.country,pendingTemplate.country));
+  $('#country').value=pendingTemplate.country;$('#days').value=pendingTemplate.days;$('#mode').value=t.mode;$('#trip-name').value=pendingTemplate.name||`${pendingTemplate.country} · ${t.name}`;
+  $('#file-order').checked=candidates().some(p=>!coordinates(p.lat,p.lng));renderStart();
+  $('#template-active').textContent=`Modèle actif : ${t.name}. Budget de départ ${pendingTemplate.dailyLimit} € / jour. Ajoutez ou cochez vos lieux, puis créez le voyage.`;
+}
+$('#template-form').addEventListener('submit',event=>{event.preventDefault();const values=new FormData(event.target),profile=String(values.get('profile')),country=String(values.get('country')).trim(),days=Number(values.get('days')),dailyLimit=Number(values.get('dailyLimit')),startDate=String(values.get('startDate')||'');try{if(!tripTemplates[profile]||!country||!Number.isInteger(days)||days<1||days>30||!Number.isFinite(dailyLimit)||dailyLimit<0||dailyLimit>1e12)throw new Error('Vérifiez les paramètres du modèle.');pendingTemplate={profile,country,days,dailyLimit,startDate,name:String(values.get('name')||'').trim()};localStorage.setItem('voyage.template-draft.v1',JSON.stringify(pendingTemplate));applyTemplateDraft();$('#template-dialog').close();location.hash='#carnet';notice('Modèle préparé. Vos lieux et dossiers existants sont conservés.');}catch(error){notice(error.message);}});
+applyTemplateDraft();

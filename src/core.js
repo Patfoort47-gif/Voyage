@@ -78,10 +78,18 @@ export function distance(a, b) {
   return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(Math.max(0, 1 - x)));
 }
 
-export function planTrip(places, days, startId, fileOrder = false) {
+export function planTrip(places, days, startId, fileOrder = false, dayGroups = null) {
   if (!Number.isInteger(days) || days < 1 || days > 30) throw new Error('Choisis entre 1 et 30 jours.');
   if (!places.length) throw new Error('Sélectionne au moins un lieu.');
   if (!fileOrder && places.some(p => !coordinates(p.lat, p.lng))) throw new Error('Ce fichier ne fournit pas les coordonnées de tous les lieux. Coche « Répartir dans l’ordre du carnet » ou complète les coordonnées pour organiser les étapes par proximité.');
+  if(dayGroups) {
+    if(!Array.isArray(dayGroups))throw new Error('Répartition par journée invalide.');
+    const ids=dayGroups.flat();
+    if(!Array.isArray(dayGroups)||!dayGroups.length||dayGroups.length>days||dayGroups.some(group=>!Array.isArray(group)||!group.length)||ids.length!==places.length||new Set(ids).size!==ids.length||ids.some(id=>!places.some(p=>p.id===id)))throw new Error('La répartition par journée ne correspond plus aux lieux du voyage.');
+    const result=[];let previous=null;
+    dayGroups.forEach(group=>{const stops=group.map(id=>places.find(p=>p.id===id)),travel=previous?[previous,...stops]:stops;const km=fileOrder?null:travel.slice(1).reduce((sum,p,i)=>sum+distance(travel[i],p),0);result.push({stops,previous,km});previous=stops.at(-1);});
+    return {days:result,unusedDays:days-result.length,fileOrder,kmSaved:0,grouped:true};
+  }
   const remaining = [...places];
   const start = Math.max(0, remaining.findIndex(p => p.id === startId));
   let ordered = [remaining.splice(start, 1)[0]];

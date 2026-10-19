@@ -4,7 +4,7 @@ import { planTrip } from './core.js';
 export const tripsKey = 'voyage.trips.v1';
 
 export function routeSignature(trip) {
-  return JSON.stringify(['nearest-2opt-v1', trip.id, trip.days, trip.mode, trip.fileOrder, trip.startId, trip.places.map(p => [p.id, p.lat, p.lng, p.googlePlaceId || ''])]);
+  return JSON.stringify(['nearest-2opt-v1', trip.id, trip.days, trip.mode, trip.fileOrder, trip.startId, trip.dayGroups||null, trip.places.map(p => [p.id, p.lat, p.lng, p.googlePlaceId || ''])]);
 }
 
 export function formatTripCreatedAt(value) {
@@ -20,7 +20,8 @@ export function remainingPlaces(places, trip) {
 
 export function updateTripPlace(trip, id, patch) {
   if (!trip.places.some(p => p.id === id)) throw new Error('Ce lieu ne figure plus dans le voyage.');
-  return validateTrip({ ...trip, updatedAt: new Date().toISOString(), places: trip.places.map(p => p.id === id ? { ...p, ...patch, id: p.id } : p) });
+  const moved=trip.places.some(p=>p.id===id&&(('lat' in patch&&patch.lat!==p.lat)||('lng' in patch&&patch.lng!==p.lng)));
+  return validateTrip({ ...trip,...(moved?{dayGroups:null}:{}), updatedAt: new Date().toISOString(), places: trip.places.map(p => p.id === id ? { ...p, ...patch, id: p.id } : p) });
 }
 
 export function validateTrip(trip) {
@@ -36,7 +37,7 @@ export function validateTrip(trip) {
     if(place.tasks!==undefined && (!Array.isArray(place.tasks)||place.tasks.length>100||place.tasks.some(task=>!task||typeof task.id!=='string'||!task.id||typeof task.text!=='string'||!task.text.trim()||task.text.length>300||typeof task.done!=='boolean')||new Set(place.tasks.map(t=>t.id)).size!==place.tasks.length))throw new Error('La liste des tâches du lieu est invalide.');
   }
   if (trip.organizer !== undefined) validateOrganizer(trip.organizer);
-  planTrip(trip.places, trip.days, trip.startId, trip.fileOrder);
+  planTrip(trip.places, trip.days, trip.startId, trip.fileOrder, trip.dayGroups);
   return trip;
 }
 
@@ -45,7 +46,8 @@ export function createTrip(input, previous = null) {
   const trip = {
     id: previous?.id || crypto.randomUUID(), name: input.name.trim(), country: input.country.trim(),
     days: Number(input.days), mode: input.mode, fileOrder: Boolean(input.fileOrder), startId: input.startId || '',
-    ...(previous?.organizer ? { organizer: structuredClone(previous.organizer) } : {}),
+    ...(previous?.organizer ? { organizer: structuredClone(previous.organizer) } : input.organizer ? {organizer:structuredClone(input.organizer)} : {}),
+    ...(previous?.dayGroups && !input.fileOrder && previous.days===Number(input.days) && previous.startId===(input.startId||'') && previous.places.length===input.places.length && previous.places.every(p=>input.places.some(q=>q.id===p.id&&q.lat===p.lat&&q.lng===p.lng)) ? {dayGroups:structuredClone(previous.dayGroups)} : {}),
     places: structuredClone(input.places), createdAt: previous?.createdAt || now, updatedAt: now
   };
   if (previous?.days !== undefined && previous.days !== trip.days && trip.organizer?.packing) delete trip.organizer.packing.weather;
