@@ -42,3 +42,5 @@ body[data-view=trip] #results{scroll-margin-top:112px}@media(max-width:760px){bo
 /* Ateliers d’import et de préparation */
 #maps-import-dialog,#day-groups-dialog{width:min(940px,94vw);max-height:88dvh;overflow:auto}#template-dialog{width:min(580px,94vw);max-height:88dvh;overflow:auto}
 #maps-paste-preview,.group-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin:18px 0}.maps-row{min-width:0}.maps-row a{overflow-wrap:anywhere}.group-preview label{display:block;margin:12px 0}.import-box{flex-wrap:wrap}#template-active:empty{display:none}
+
+#cloud-dialog{width:min(760px,94vw);max-height:88dvh;overflow:auto}#cloud-dialog textarea{width:100%;overflow-wrap:anywhere;word-break:break-all;font-family:monospace;font-size:.85rem}#cloud-dialog section{margin-top:20px;padding-top:16px;border-top:1px solid var(--line,#ded9e6)}#cloud-status{flex-basis:100%;overflow-wrap:anywhere}#cloud-setup-form input{min-width:0}

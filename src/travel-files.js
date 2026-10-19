@@ -21,3 +21,8 @@ export async function documentFile(action, id, file) {
     });
   } finally { db.close(); }
 }
+
+export async function deleteUnusedDocument(id,storage=globalThis.localStorage,remove=key=>documentFile('delete',key)){
+  try{const trips=JSON.parse(storage.getItem('voyage.trips.v1')||'[]');if(!Array.isArray(trips)||trips.some(t=>(t.organizer?.bookings||[]).some(b=>b.attachment?.id===id)))return;}catch{return;}
+  await remove(id);
+}

@@ -1,3 +1,4 @@
+import { CloudUI } from './cloud-ui.js';
 import { MapsImport } from './maps-import-ui.js';
 import { DayGroups } from './day-groups-ui.js';
 import { tripTemplates, templateOrganizer } from './trip-templates.js';
@@ -5,7 +6,7 @@ import { setupPWA } from './pwa.js';
 import { workspaceBackup, readBackup, prepareImportedBackup, itineraryCopy, downloadFile } from './backups.js';
 import { tripInsights, stepTracker, taskList } from './trip-insights.js';
 import { routeSnapshot } from './offline-routes.js';
-import { documentFile } from './travel-files.js';
+import { documentFile, deleteUnusedDocument } from './travel-files.js';
 import { Organizer, travelPages } from './organizer.js';
 import { flagMarkup } from './country-flags.js';
 import { destinationTheme, themeStyle, themeIllustration } from './destination-theme.js';
@@ -31,9 +32,11 @@ let pendingTemplate=null;
 try{const value=JSON.parse(localStorage.getItem('voyage.template-draft.v1')||'null');if(value&&tripTemplates[value.profile]&&typeof value.country==='string'&&Number.isInteger(value.days)&&value.days>=1&&value.days<=30&&Number.isFinite(value.dailyLimit)&&value.dailyLimit>=0)pendingTemplate=value;}catch{}
 let editingPlaces = [];
 let currentRecord = null;
+let cloudUI=null,applyingCloud=false;
 const tripMap = new TripMap();
 const organizer = new Organizer($('#trip-organizer-page'), {
   getTrip: id => trips.find(t => t.id === id),
+  canEdit:id=>!sharedReadOnly(id),
   saveTrip: updated => {
     storeTrips(trips.map(t => t.id === updated.id ? updated : t));
     if (currentRecord?.id === updated.id) currentRecord = updated;
@@ -61,7 +64,10 @@ try { trips = loadTrips(localStorage); }
 catch { tripStorageReadable = false; notice('Les voyages enregistrés ne peuvent pas être lus. Leur sauvegarde est préservée ; vérifiez que le stockage du navigateur est accessible.'); }
 
 function storeTrips(next) {
+  if(!applyingCloud)cloudUI?.cloud.readOnlyGuard(next);
+  const previous=trips;
   if (!tripStorageReadable) throw new Error('La sauvegarde des voyages est inaccessible. Rechargez la page après avoir vérifié le stockage du navigateur.');
+  if(!applyingCloud)try{cloudUI?.cloud.changed(next,previous);}catch{notice('Synchronisation en attente : vérifiez le stockage du navigateur.');}
   try { persistTrips(localStorage, next); }
   catch { throw new Error('Impossible de sauvegarder les voyages dans ce navigateur. Libérez de l’espace ou autorisez le stockage du site. Aucune modification des voyages n’a été enregistrée.'); }
   trips = next;
@@ -226,7 +232,7 @@ function setDestination(theme) {
   for (const field of ['accent', 'dark', 'soft', 'highlight']) document.body.style.setProperty('--destination-' + (field === 'highlight' ? 'pop' : field), theme[field]);
   document.body.dataset.destination = theme.id;
 }
-function showTrip(record, page = 'route') {
+function showTrip(record, page = 'route', scroll = true) {
   if (!Object.hasOwn(travelPages, page)) page = 'route';
   currentRecord = record;
   const theme = destinationTheme(record);
@@ -266,7 +272,8 @@ function showTrip(record, page = 'route') {
   if (cached.status) $('#google-routes-status').textContent = cached.status;
   if (page === 'route') mapReady = tripMap.show(trip).then(() => cached.days.forEach((day, i) => { if (day.result?.geometry) tripMap.setRoute(i, day.result.geometry); }));
   if (page === 'route' && !cached.attempted && activeRouteKey !== key) restoreRouteSnapshot(record,key,routeGeneration);
-  $('#results').scrollIntoView({ behavior: 'smooth' });
+  updateTripAccess();
+  if(scroll)$('#results').scrollIntoView({ behavior: 'smooth' });
 }
 $('#plan-form').addEventListener('submit', e => {
   e.preventDefault();
@@ -361,7 +368,7 @@ function renderTrips() {
   $('#nav-trip-count').textContent = trips.length;
   $('#trip-folders').innerHTML = trips.map(t => {
     const theme = destinationTheme(t);
-    return `<article class="trip-folder" data-destination="${theme.id}" style="${themeStyle(theme)}"><div class="folder-cover">${themeIllustration(theme)}<span class="destination-chip">${flagMarkup(t.country)}${escape(t.country)}</span><span class="folder-cover-number">${t.days} jours d’évasion</span></div><div class="folder-body"><p class="folder-mood">${escape(theme.label)}</p><h3>${escape(t.name)}</h3><p class="trip-date small muted">${escape(formatTripCreatedAt(t.createdAt))}</p><div class="folder-stats"><span>⌁ ${t.places.length} lieu${t.places.length > 1 ? 'x' : ''}</span><span>${t.mode === 'walking' ? 'À pied' : 'En voiture'}</span><span>${t.fileOrder ? 'Ordre du carnet' : 'Par proximité'}</span></div><div class="folder-actions"><button class="secondary" data-trip-open="${escape(t.id)}">Consulter <span aria-hidden="true">→</span></button><button class="quiet" data-trip-edit="${escape(t.id)}">Modifier</button><button class="danger-button" data-trip-delete="${escape(t.id)}">Supprimer</button></div></div></article>`;
+    return `<article class="trip-folder" data-destination="${theme.id}" style="${themeStyle(theme)}"><div class="folder-cover">${themeIllustration(theme)}<span class="destination-chip">${flagMarkup(t.country)}${escape(t.country)}</span><span class="folder-cover-number">${t.days} jours d’évasion</span></div><div class="folder-body"><p class="folder-mood">${escape(theme.label)}</p><h3>${escape(t.name)}</h3><p class="trip-date small muted">${escape(formatTripCreatedAt(t.createdAt))}</p><div class="folder-stats"><span>⌁ ${t.places.length} lieu${t.places.length > 1 ? 'x' : ''}</span><span>${t.mode === 'walking' ? 'À pied' : 'En voiture'}</span><span>${t.fileOrder ? 'Ordre du carnet' : 'Par proximité'}</span></div><div class="folder-actions"><button class="secondary" data-trip-open="${escape(t.id)}">Consulter <span aria-hidden="true">→</span></button><button class="quiet" data-trip-edit="${escape(t.id)}" ${sharedReadOnly(t.id)?'disabled title="Accès en lecture seule"':''}>Modifier</button><button class="danger-button" data-trip-delete="${escape(t.id)}" ${sharedReadOnly(t.id)?'disabled title="Accès en lecture seule"':''}>Supprimer</button></div></div></article>`;
   }).join('');
 }
 function renderTripEditor() {
@@ -393,7 +400,7 @@ $('#trip-folders').addEventListener('click', e => {
     }
     if (remove && confirm(`Supprimer le dossier « ${trip.name} » ? Les lieux de votre carnet seront conservés.`)) {
       storeTrips(trips.filter(t => t.id !== id));
-      for (const booking of trip.organizer?.bookings || []) if (booking.attachment) documentFile('delete', booking.attachment.id).catch(() => {});
+      for (const booking of trip.organizer?.bookings || []) if (booking.attachment) deleteUnusedDocument(booking.attachment.id).catch(() => {});
       if ($('#results').dataset.tripId === id) { $('#results').hidden = true; currentRecord = null; routeGeneration++; location.hash = '#voyages'; }
       notice(`Le voyage « ${trip.name} » a été supprimé.`);
     }
@@ -798,3 +805,30 @@ function applyTemplateDraft() {
 }
 $('#template-form').addEventListener('submit',event=>{event.preventDefault();const values=new FormData(event.target),profile=String(values.get('profile')),country=String(values.get('country')).trim(),days=Number(values.get('days')),dailyLimit=Number(values.get('dailyLimit')),startDate=String(values.get('startDate')||'');try{if(!tripTemplates[profile]||!country||!Number.isInteger(days)||days<1||days>30||!Number.isFinite(dailyLimit)||dailyLimit<0||dailyLimit>1e12)throw new Error('Vérifiez les paramètres du modèle.');pendingTemplate={profile,country,days,dailyLimit,startDate,name:String(values.get('name')||'').trim()};localStorage.setItem('voyage.template-draft.v1',JSON.stringify(pendingTemplate));applyTemplateDraft();$('#template-dialog').close();location.hash='#carnet';notice('Modèle préparé. Vos lieux et dossiers existants sont conservés.');}catch(error){notice(error.message);}});
 applyTemplateDraft();
+
+cloudUI=new CloudUI({root:$('#cloud-dialog'),getTrips:()=>trips,getCurrent:()=>currentRecord,notice,
+ isBusy:()=>!!document.querySelector('dialog[open]')||document.hidden||!!document.activeElement?.closest('input,textarea,select,[contenteditable=true]'),
+ applyTrips:async(incoming,{initial,previousIds})=>{
+  if(!tripStorageReadable)throw new Error('La sauvegarde locale est illisible et doit être réparée avant la synchronisation.');
+  const ids=new Set(incoming.map(t=>t.id)),previous=new Set(previousIds);
+  const retained=trips.filter(t=>!previous.has(t.id)).flatMap(t=>{if(!ids.has(t.id))return [t];if(initial&&JSON.stringify(incoming.find(q=>q.id===t.id))!==JSON.stringify(t))return [{...structuredClone(t),id:crypto.randomUUID(),name:t.name+' (copie locale avant connexion)'}];return [];});
+  applyingCloud=true;try{storeTrips([...incoming,...retained]);}finally{applyingCloud=false;}
+  if(currentRecord){const updated=trips.find(t=>t.id===currentRecord.id);if(updated){const changed=JSON.stringify(currentRecord)!==JSON.stringify(updated);currentRecord=updated;const page=new URLSearchParams(location.hash.slice(1)).get('page')||'route';if(changed&&document.body.dataset.view==='trip'&&page==='route')showTrip(updated,page,false);}else if(document.body.dataset.view==='trip')location.hash='#voyages';}
+ },
+ importShared:async data=>{const imported=await prepareImportedBackup(data);try{storeTrips([...imported.trips,...trips]);}catch(error){await imported.rollback();throw error;}},
+});
+$('#cloud-open').addEventListener('click',()=>cloudUI.open());
+$('#share-trip-link').addEventListener('click',()=>cloudUI.shareTrip());
+$('#personal-copy').addEventListener('click',()=>{if(!currentRecord)return;try{const copy={...structuredClone(currentRecord),id:crypto.randomUUID(),name:currentRecord.name+' (copie personnelle)',updatedAt:new Date().toISOString()};storeTrips([copy,...trips]);showTrip(copy);notice('Copie personnelle créée. Elle reste locale avec un accès de lecture seule.');}catch(error){notice(error.message);}});
+
+function sharedReadOnly(id){return !!cloudUI?.cloud.state&&!cloudUI.cloud.state.config.writeToken&&Object.hasOwn(cloudUI.cloud.state.base,id);}
+function updateTripAccess(){
+ const readOnly=currentRecord&&sharedReadOnly(currentRecord.id),shared=currentRecord&&cloudUI?.cloud.state&&Object.hasOwn(cloudUI.cloud.state.base,currentRecord.id);
+ const banner=$('#trip-access-banner'),message=readOnly?'Lecture seule : ce dossier est partagé avec vous. Pour préparer votre propre version, créez une copie personnelle.':shared?'Espace partagé : vos modifications de ce dossier seront synchronisées.':'Dossier personnel sur cet appareil.';if(banner.textContent!==message)banner.textContent=message;
+ if(!readOnly)document.querySelectorAll('[data-cloud-read-only]').forEach(node=>{node.disabled=false;delete node.dataset.cloudReadOnly;});
+ if(readOnly)document.querySelectorAll('#propose-day-groups,#reset-day-groups,#descriptions-start,#google-resolve-trip,#day-cards input,#day-cards textarea,#day-cards button,#trip-organizer-page form:not(#converter-form) input,#trip-organizer-page form:not(#converter-form) textarea,#trip-organizer-page form:not(#converter-form) select,#trip-organizer-page form:not(#converter-form) button,#trip-organizer-page [data-booking-kind],#trip-organizer-page [data-edit],#trip-organizer-page [data-delete],#trip-organizer-page [data-check],#trip-organizer-page [data-ticket-place],#trip-organizer-page [data-action=uncheck],#trip-organizer-page [data-action=rates],#trip-organizer-page [data-action=official-sites],#organizer-import,#ticket-upload,#confirmation-upload').forEach(node=>{if(!node.disabled){node.dataset.cloudReadOnly='true';node.disabled=true;}});
+}
+new MutationObserver(()=>updateTripAccess()).observe($('#results'),{childList:true,subtree:true});
+updateTripAccess();
+
+addEventListener('voyage-cloud-state',()=>{updateTripAccess();renderTrips();});

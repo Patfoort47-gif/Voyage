@@ -5,7 +5,7 @@ import { parseTicket } from './ticket-parser.js';
 import { destinationCurrency } from './destination-currency.js';
 import { findOfficialSite } from './official-sites.js';
 import { currencies, safeLink, dateForDay, organizerData, convert, dailyBudget, fetchRates, fetchWeather, packingItems, waypointsGPX, weatherPlan, weatherNeedsRefresh } from './travel-tools.js';
-import { documentFile } from './travel-files.js';
+import { documentFile, deleteUnusedDocument } from './travel-files.js';
 import { planTrip, coordinates } from './core.js';
 
 export const travelPages = { route:'Itinéraire', reservations:'Billets & horaires', budget:'Budget & devises', checklist:'Ma check-list' };
@@ -23,8 +23,8 @@ function download(blob,name) {
   a.href=url; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(url),10000);
 }
 export class Organizer {
-  constructor(root,{getTrip,saveTrip}) {
-    this.root=root; this.getTrip=getTrip; this.saveTrip=saveTrip; this.id=''; this.page=''; this.generation=0; this.bookingSection='flight'; this.weatherPending=null; this.weatherAttempts=new Map();
+  constructor(root,{getTrip,saveTrip,canEdit=()=>true}) {
+    this.root=root; this.canEdit=canEdit; this.getTrip=getTrip; this.saveTrip=saveTrip; this.id=''; this.page=''; this.generation=0; this.bookingSection='flight'; this.weatherPending=null; this.weatherAttempts=new Map();
     root.addEventListener('submit',e=>this.submit(e));
     root.addEventListener('click',e=>this.click(e));
     root.addEventListener('change',e=>this.change(e));
@@ -43,7 +43,7 @@ export class Organizer {
     this.formRevision=(this.formRevision||0)+1;this.ticketDraft=null;
     const trip=this.getTrip(this.id); if(!trip)return;
     const data=organizerData(trip);
-    this.root.innerHTML=`<div class="tools-date"><form id="travel-date-form">${field('startDate','Date de départ','date',`value="${escape(data.startDate)}"`)}<button class="secondary">Enregistrer la date</button></form><p class="small muted">Ces pages sont liées à ce voyage. Sauvegarde dans ce navigateur, sans compte ni synchronisation entre appareils.</p><button class="quiet" type="button" data-action="backup">Exporter le dossier complet</button><label class="backup-import">Restaurer un dossier exporté<input id="organizer-import" type="file" accept=".json,application/json"></label></div><p id="tools-status" class="tools-status" role="status" aria-live="polite"></p>${this[this.page](trip,data)}`;
+    this.root.innerHTML=`<div class="tools-date"><form id="travel-date-form">${field('startDate','Date de départ','date',`value="${escape(data.startDate)}"`)}<button class="secondary">Enregistrer la date</button></form><p class="small muted">Ces pages sont liées à ce voyage. Sauvegarde sur cet appareil ; activez « Synchronisation & partage » pour les retrouver ailleurs.</p><button class="quiet" type="button" data-action="backup">Exporter le dossier complet</button><label class="backup-import">Restaurer un dossier exporté<input id="organizer-import" type="file" accept=".json,application/json"></label></div><p id="tools-status" class="tools-status" role="status" aria-live="polite"></p>${this[this.page](trip,data)}`;
     if(this.page==='budget')this.conversion();
     if(this.page==='checklist')queueMicrotask(()=>this.autoWeather());
   }
@@ -174,7 +174,7 @@ export class Organizer {
     }
   }
   async autoWeather() {
-    if(this.page!=='checklist'||document.hidden||this.root.hidden)return;
+    if(this.page!=='checklist'||document.hidden||this.root.hidden||!this.canEdit(this.id))return;
     const id=this.id,trip=this.getTrip(id);if(!trip)return;
     const data=organizerData(trip),plan=weatherPlan(trip,data.packing);
     const message=text=>{if(this.id===id&&this.page==='checklist'){const node=this.root.querySelector('#auto-weather-status');if(node)node.textContent=text;}};
@@ -218,7 +218,7 @@ export class Organizer {
           if(booking.kind==='hotel' && booking.bookingDate && booking.checkoutDate && booking.checkoutDate<booking.bookingDate)throw new Error('La date de retour ou de départ de l’hôtel doit suivre la date de début.');
           data.bookings=[...data.bookings.filter(b=>b.id!==booking.id),booking];
           this.save(data,id); newAttachment=null;this.ticketDraft=null;
-          if(previous?.attachment && previous.attachment.id!==attachment?.id) await documentFile('delete',previous.attachment.id).catch(()=>{});
+          if(previous?.attachment && previous.attachment.id!==attachment?.id) await deleteUnusedDocument(previous.attachment.id).catch(()=>{});
           if(generation===this.generation){this.render();this.status('Réservation enregistrée.');} return;
         }
         case 'budget-settings-form': data.budget.currency=value('currency'); data.budget.dailyLimit=this.amount(value('limit')); break;
@@ -272,7 +272,7 @@ export class Organizer {
         if(kind==='expenses')data.budget.expenses=data.budget.expenses.filter(r=>r.id!==recordId);
         else if(kind==='packing'){data.packing.manual=data.packing.manual.filter(r=>r.id!==recordId);delete data.packing.checked[recordId];}
         else {attachment=data[kind].find(r=>r.id===recordId)?.attachment;data[kind]=data[kind].filter(r=>r.id!==recordId);}
-        this.save(data,id);if(attachment)await documentFile('delete',attachment.id).catch(()=>{});
+        this.save(data,id);if(attachment)await deleteUnusedDocument(attachment.id).catch(()=>{});
         if(generation===this.generation){this.render();this.status('Élément supprimé.');}return;
       }
       switch(button.dataset.action) {
@@ -348,7 +348,7 @@ export class Organizer {
       }
       const previous=this.getTrip(id);this.saveTrip({...restored,id,createdAt:previous.createdAt,organizer:restoredData,updatedAt:new Date().toISOString()});
       created.length=0;
-      for(const booking of previous.organizer?.bookings || []) if(booking.attachment) await documentFile('delete',booking.attachment.id).catch(()=>{});
+      for(const booking of previous.organizer?.bookings || []) if(booking.attachment) await deleteUnusedDocument(booking.attachment.id).catch(()=>{});
       if(generation===this.generation){location.hash='#voyage='+encodeURIComponent(id);this.status('Sauvegarde restaurée.');}
     }catch(error){for(const key of created)await documentFile('delete',key).catch(()=>{});if(generation===this.generation)this.status('Restauration impossible : '+error.message);}
   }

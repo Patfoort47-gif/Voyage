@@ -10,13 +10,45 @@ Port par défaut : 3000. Variable facultative : `PORT`. Le serveur écoute sur `
 
 L’interface peut aussi être hébergée en statique sur GitHub Pages, sous `/Voyage/`. Les chemins des ressources et du lien d’accueil sont relatifs pour fonctionner aussi bien à la racine que dans ce sous-répertoire.
 
+## Synchronisation PC / téléphone et droits de partage
+
+Le bouton **Synchronisation & partage** ouvre l’espace en ligne. Il utilise un projet **Supabase Free** à créer par le propriétaire : l’hébergement GitHub Pages ne fournit ni base de données ni synchronisation à lui seul. L’intégration est livrée sans projet externe préconfiguré. Aucune donnée privée n’est publiée dans Git ni dans le code du site.
+
+### Installation, une seule fois
+
+1. Créez un projet Supabase avec l’offre Free. Dans les réglages API / Connect, récupérez son URL `https://…supabase.co` et sa **clé publique publishable ou anon**. Ne renseignez jamais de clé secrète / service_role dans le site.
+2. Dans l’application, ouvrez **Synchronisation & partage**, renseignez ces deux valeurs puis **Préparer l’installation**.
+3. Exécutez le script généré dans le **SQL Editor** du même projet Supabase. Il crée une table protégée par RLS, deux fonctions autorisées et un espace vide avec des empreintes de clés aléatoires. Il n’efface pas les espaces existants. Le script peut être téléchargé. La création directe d’espaces par l’API publique est interdite.
+4. Cliquez **J’ai exécuté le script : connecter et sauvegarder mes voyages**. Tous les dossiers actuels, y compris réservations et billets, sont envoyés chiffrés. Conservez le **lien de modification** affiché, puis ouvrez-le sur votre téléphone et confirmez **Rejoindre et récupérer les voyages**. L’accès reste mémorisé dans chaque navigateur.
+
+Le projet appartient à son créateur. L’offre Free reste soumise aux quotas et conditions Supabase, dont la mise en veille éventuelle d’un projet inactif ; aucun service payant ni facturation n’est configuré par cette application. En cas d’indisponibilité, les copies locales restent accessibles.
+
+### Lecture et modification
+
+- **Lien de lecture** : consultation de tous les dossiers de l’espace, réservations et billets compris. L’interface bloque les modifications de la copie partagée et l’API refuse les écritures sans la clé de modification. **Créer une copie personnelle** permet de préparer une version locale indépendante.
+- **Lien de modification** : accès aux mêmes données, avec ajout, modification et suppression. Utilisez ce lien pour vos propres appareils et les personnes avec lesquelles vous préparez le voyage.
+- Les permissions sont attachées aux **liens**, sans comptes nominatifs. Un destinataire peut transmettre son lien ; il n’existe pas encore d’invitation par e-mail, de liste de membres ou de révocation individuelle. Le propriétaire du projet peut couper tous les accès en supprimant la ligne de l’espace dans Supabase ; cela ne supprime pas les copies déjà téléchargées. Ne rendez pas publics ces liens contenant les clés d’accès.
+- **Partager cet itinéraire par lien** fonctionne immédiatement sans Supabase : c’est une copie statique des lieux, notes, tâches et date de départ, sans réservations, billets ni dépenses. Le destinataire confirme son import. Les changements ultérieurs ne se propagent pas. Limite : 48 000 caractères encodés ; pour un gros dossier, utilisez le JSON ou l’espace synchronisé.
+
+Les liens utilisent le fragment `#espace=…` ou `#partage=…`, qui n’est pas transmis au serveur HTTP. Les liens de l’espace contiennent les clés nécessaires au déchiffrement ; seul le lien de modification contient en plus le droit d’écriture. Les données sont chiffrées côté navigateur avec AES-GCM avant envoi et ne sont jamais mises en cache par le Service Worker.
+
+### Comportement de la synchronisation
+
+Vérification toutes les 15 secondes lorsque l’onglet est actif, à son retour au premier plan et au retour du réseau. **Synchroniser maintenant** permet de la déclencher manuellement. Le serveur ne renvoie pas le contenu complet si la version est inchangée. La synchronisation attend lorsque vous saisissez dans un champ ou qu’une fenêtre de dialogue est ouverte.
+
+Les nouveaux dossiers créés sur un appareil avec un accès de modification rejoignent l’espace. Les dossiers déjà présents avant de rejoindre un espace restent personnels s’ils n’en font pas partie. Le carnet de lieux non utilisés n’est pas synchronisé. En cas de collision à la connexion, une copie locale différente est conservée. Les fichiers PDF et images des dossiers partagés sont inclus, avec une limite totale de **12 Mo de données JSON et documents encodés par espace**. Les sauvegardes JSON classiques conservent leur limite de 80 Mo.
+
+Les modifications hors ligne restent locales et sont envoyées au retour du réseau. Une fusion à trois voies distingue les modifications indépendantes des conflits sur un même dossier ; les deux versions d’un dossier modifié simultanément sont conservées au lieu d’écraser un appareil. Les écritures utilisent une version attendue atomique côté PostgreSQL. Déconnecter un appareil conserve ses dossiers locaux et ne révoque pas les liens.
+
+Validation : tests Node du chiffrement, des liens et de la fusion, tests d’accès SQL sur PostgreSQL embarqué et parcours multi-navigateurs avec API simulée. L’activation sur votre propre projet Supabase reste nécessaire ; aucun projet de production n’a été créé ni connecté automatiquement.
+
 ## Utilisation
 
 1. Essayez le carnet de démonstration Portugal, ajoutez vos lieux manuellement ou importez un CSV / GeoJSON décompressé depuis Google Takeout.
 2. Les exports Google français `Titre,Note,URL,Tags,Commentaire` sont reconnus, y compris les lignes vides, notes multilignes et caractères accentués. Le nom du fichier devient la catégorie par défaut (par exemple `À visiter.csv` → « À visiter »). Notes et commentaires sont réunis sans perte de leur texte, les tags et les liens originaux sont conservés et exportables. Le pays n’est jamais déduit d’un nom ambigu. Pour une liste de plusieurs pays, laissez le pays d’import vide puis cochez les lieux d’un même pays et utilisez « Appliquer le pays ». Cette action concerne uniquement les lieux cochés de la vue filtrée ; le remplacement de pays existants demande confirmation.
 3. Sélectionnez les lieux, le pays, la durée (1 à 30 jours), le moyen de transport et éventuellement le premier lieu.
 4. Créez le parcours puis ouvrez les étapes dans Google Maps pour obtenir les vrais trajets. Les grands parcours sont divisés en liens comprenant au maximum trois étapes intermédiaires.
-5. Exportez le carnet en GeoJSON pour le sauvegarder et le réimporter. La sauvegarde automatique est propre au navigateur et à l’origine du site ; pas de compte ni de synchronisation entre appareils.
+5. Exportez le carnet en GeoJSON pour le sauvegarder et le réimporter. Le carnet de lieux reste local. Les dossiers peuvent être synchronisés en activant l’espace en ligne décrit ci-dessous.
 
 ## Import rapide, confirmations et modèles
 
@@ -38,7 +70,7 @@ Chaque dossier propose « Consulter », « Modifier » et « Supprimer ». La mo
 
 « Supprimer tous les lieux affichés » supprime, après confirmation, tous les résultats de la vue actuelle, cochés ou non. Sans filtre, ce bouton vide le carnet. Avec une recherche ou une catégorie, les lieux masqués sont conservés. Les voyages sauvegardés sont toujours conservés.
 
-Les dossiers sont enregistrés en `localStorage` sous `voyage.trips.v1`, séparément du carnet (`voyage.places.v1`). Ils ne sont pas synchronisés avec un compte ou un autre appareil. Effacer les données du site les supprime. L’export GeoJSON concerne le carnet de lieux ; les itinéraires peuvent être imprimés. Si le stockage échoue, la création, la modification ou la suppression du voyage est signalée comme non enregistrée.
+Les dossiers sont enregistrés en `localStorage` sous `voyage.trips.v1`, séparément du carnet (`voyage.places.v1`). Sans espace connecté, ils restent propres à ce navigateur. Effacer les données du site supprime ces copies locales ; un espace configuré permet de récupérer sa dernière version synchronisée via son lien privé. L’export GeoJSON concerne le carnet de lieux ; les itinéraires peuvent être imprimés. Si le stockage échoue, la création, la modification ou la suppression du voyage est signalée comme non enregistrée.
 
 Les CSV de listes Google ne fournissent souvent ni pays ni coordonnées. Vous pouvez cocher « Répartir dans l’ordre du carnet » pour préparer des journées sans coordonnées. Ce mode conserve l’ordre d’import (sauf le premier lieu si vous en avez choisi un), équilibre le nombre de visites et ne prétend pas optimiser les déplacements. Aucune distance ni durée de trajet n’est affichée. Les liens de parcours utilisent le nom et le pays des lieux sans coordonnées : vérifiez les correspondances dans Maps. Chaque lieu conserve aussi son lien Google original pour retrouver précisément la fiche enregistrée. Pour le tri par proximité, complétez latitude et longitude avec « Modifier » (clic droit sur le point dans Google Maps). Les liens courts ne sont pas développés automatiquement. Le bouton « Retrouver les coordonnées » exploite les liens Takeout avec les services gratuits OpenStreetMap ; chaque correspondance est confirmée avant enregistrement.
 
@@ -154,7 +186,7 @@ Chaque dossier propose quatre pages : **Itinéraire**, **Billets & horaires**, *
 - **Budget & devises** : conversion via des taux EUR publiés par Frankfurter / banques centrales, date et source affichées, saisie manuelle si une devise ou le service est indisponible. Les frais de change ne sont pas inclus. Dépenses prévues/payées modifiables, devise, catégorie et journée, objectif par jour, solde et dépassements. Les réservations n’ajoutent pas automatiquement de dépense. Un taux manquant rend le total explicitement incomplet. Après réduction de la durée, les dépenses des journées retirées restent visibles et comptabilisées.
 - **Ma check-list** : activités course/randonnée suggérées par les noms et catégories des lieux, puis modifiables ; accessoires de montre optionnels. Météo Open-Meteo du lieu choisi, à partir de la date de départ (ou aujourd’hui), jusqu’à 16 jours. Le bulletin indique le lieu, la date de chargement et une éventuelle couverture partielle. Pluie ≥ 40 %, minimum < 10 °C, maximum ≥ 28 °C et vent ≥ 40 km/h adaptent la liste. Un bulletin passé n’alimente plus les conseils et une modification de durée ou du point de référence l’invalide. Les cases cochées et ajouts personnels restent enregistrés. Les autres étapes, l’altitude et les alertes locales demandent une vérification séparée. L’export GPX fournit uniquement les étapes géolocalisées, sans tracé ni guidage ; il n’y a pas de synchronisation directe avec une montre.
 
-Les données restent dans ce navigateur, sans compte ni synchronisation distante. **Exporter le dossier complet** crée une sauvegarde JSON incluant itinéraire, informations pratiques et pièces jointes ; **Restaurer un dossier exporté** remplace le contenu du dossier ouvert après confirmation, en conservant son identifiant et sa date de création. Limite de sauvegarde : 80 Mo. Les fichiers ne sont pas publiés sur GitHub. Conservez vos sauvegardes privées et ne comptez pas sur le seul stockage du navigateur. La suppression d’une réservation ou d’un dossier retire aussi ses pièces jointes locales quand le stockage est disponible.
+Les données sont sauvegardées dans ce navigateur. Si un espace est connecté, ses dossiers et leurs documents sont aussi synchronisés sous forme chiffrée. **Exporter le dossier complet** crée une sauvegarde JSON incluant itinéraire, informations pratiques et pièces jointes ; **Restaurer un dossier exporté** remplace le contenu du dossier ouvert après confirmation, en conservant son identifiant et sa date de création. Limite de sauvegarde : 80 Mo. Les fichiers ne sont pas publiés sur GitHub. Conservez vos sauvegardes privées et ne comptez pas sur le seul stockage du navigateur. La suppression d’une réservation ou d’un dossier retire aussi ses pièces jointes locales quand le stockage est disponible.
 
 Réseau supplémentaire : `api.frankfurter.app` pour les taux et `api.open-meteo.com` pour la météo. Les taux sont demandés par bouton ; la météo peut être demandée manuellement ou automatiquement depuis la check-list, sans clé ni facturation. Seules les coordonnées du lieu météo sont envoyées à Open-Meteo. Une panne laisse utilisables les données sauvegardées, les activités et les taux saisis manuellement. Les tests automatisés simulent ces services ; ils ne garantissent pas leur disponibilité réelle.
 
@@ -210,7 +242,7 @@ La lecture de PDF/photos peut aussi être préparée par **Préparer aussi la le
 
 L’import global accepte le format `voyage-workspace` et l’ancien `voyage-dossier`. Les données sont validées avant application. Il ajoute des copies avec de nouveaux identifiants, restaure les documents dans IndexedDB et conserve les dossiers déjà présents ; il ne fusionne pas automatiquement deux versions d’un même voyage. Les échecs de validation ou de stockage interrompent l’import sans appliquer de données invalides. La restauration qui remplace un dossier reste une action distincte dans ses pages pratiques.
 
-**Partager l’itinéraire sans billets** propose le partage natif de fichier quand disponible, sinon télécharge un JSON à envoyer. La copie comprend les lieux, notes, tâches, suivi des visites et date de départ ; elle exclut les réservations, documents et dépenses. Le destinataire l’importe avec le même menu, puis peut modifier sa copie. Aucun serveur, compte, lien public ou synchronisation collaborative en direct n’est créé.
+**Partager l’itinéraire sans billets** propose le partage natif de fichier quand disponible, sinon télécharge un JSON à envoyer. La copie comprend les lieux, notes, tâches, suivi des visites et date de départ ; elle exclut les réservations, documents et dépenses. Le destinataire l’importe avec le même menu, puis peut modifier sa copie. Ce partage JSON ne crée pas de synchronisation. Le bouton « Partager cet itinéraire par lien » donne aussi accès à une copie statique ; les liens de l’espace synchronisé servent à suivre les modifications.
 
 ## Notes par étape, tri et aperçu du dossier
 
