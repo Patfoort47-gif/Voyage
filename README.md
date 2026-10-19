@@ -98,7 +98,7 @@ Un compteur persistant en haut du site et un compteur dans la fenêtre de valida
 
 ## Corriger un lieu dans un voyage sauvegardé
 
-Ouvrez le dossier avec « Consulter ». Chaque étape propose « Modifier ce lieu / informations » (nom, pays, coordonnées, lien, notes, descriptif, adresse, informations pratiques) et « Corriger la localisation » (nouvelle recherche ou saisie manuelle), même si des coordonnées sont déjà présentes. La modification concerne uniquement la copie du dossier, préserve sa date de création et met à jour le parcours. Les anciennes distances et géométries de l’affichage sont réinitialisées ; recalculez-les. Une modification invalide n’est pas sauvegardée. En mode de proximité, des coordonnées valides restent nécessaires pour tous les lieux.
+Ouvrez le dossier avec « Consulter ». Chaque étape propose « Modifier ce lieu / informations » (nom, pays, coordonnées, lien, notes, descriptif, adresse, informations pratiques) et « Corriger la localisation » (nouvelle recherche ou saisie manuelle), même si des coordonnées sont déjà présentes. La modification concerne uniquement la copie du dossier, préserve sa date de création et met à jour le parcours. Les anciennes distances et géométries de l’affichage sont réinitialisées et un recalcul de toutes les journées démarre automatiquement. Une modification invalide n’est pas sauvegardée. En mode de proximité, des coordonnées valides restent nécessaires pour tous les lieux.
 
 ## Carte du voyage
 
@@ -115,3 +115,13 @@ Les fiches sous les étapes affichent les descriptifs, adresses, informations pr
 Une correction via la recherche de localisation efface un ancien descriptif sourcé si les coordonnées changent, pour éviter de garder une fiche associée à la mauvaise localisation. Une modification manuelle du lieu permet de corriger le descriptif dans le même formulaire. Les horaires, prix et accès saisis ne sont pas vérifiés en direct. Les résumés ne remplacent pas les consignes officielles du lieu.
 
 Les exports/réimports GeoJSON du carnet conservent les descriptifs, sources, adresses et informations pratiques. Les dossiers gardent ces champs dans leur propre sauvegarde locale. Les tests couvrent les modifications isolées, la géométrie, les sources et la persistance ; les réponses OSRM, tuiles et Wikipédia sont simulées dans les vérifications navigateur.
+
+## Recalcul automatique et fiches avec contexte géographique
+
+Après l’enregistrement d’un lieu ou la modification d’un voyage, toutes les journées du dossier sont recalculées automatiquement (distances, durées et géométries disponibles). Une correction depuis la fenêtre de localisation déclenche également ce recalcul. Les anciens résultats sont invalidés ; une réponse d’un calcul antérieur ne peut pas remplacer ceux du nouveau parcours. Les appels restent espacés pour les services gratuits. En option Google, ces recalculs utilisent la configuration Google et peuvent être facturés comme les calculs manuels. Les erreurs par journée restent visibles et le bouton permet une nouvelle tentative.
+
+L’éditeur comporte désormais la ville et le nom local du lieu. Les résultats de géocodage conservent ces champs lorsqu’ils sont fournis. « Retrouver la ville et le nom local » consulte les coordonnées via Nominatim ; la ville est proposée et le nom du point doit être accepté explicitement, car le point le plus proche peut être un bâtiment voisin.
+
+La recherche Wikipédia exige ville et pays et combine le nom local (ou le nom connu), la ville et le pays localisé. Le mode automatique choisit notamment le suédois pour la Suède, le français pour la France, l’arabe pour la Jordanie, et propose un repli français. Lorsqu’une fiche française géolocalisée à proximité fournit un lien interlangue, son véritable titre local peut être recherché : aucun nom traduit n’est inventé. La langue peut aussi être choisie manuellement, utile pour les pays multilingues ou les noms peu connus.
+
+Les coordonnées des articles sont comparées à celles du lieu : les fiches situées à plus de 25 km sont exclues. Cette vérification est un filtre géographique, pas une preuve d’identité ; la ville, la source et les homonymes proches restent à contrôler. Une fiche sans coordonnées est explicitement marquée non vérifiée. Les descriptifs ne sont ajoutés qu’après « Utiliser ce descriptif » puis enregistrement du lieu. Le choix d’une fiche ne prétend pas vérifier les horaires ou tarifs. Les tests des services externes restent simulés.

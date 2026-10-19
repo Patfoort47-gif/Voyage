@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createTrip, updateTripPlace } from '../src/trips.js';
 import { demo, importPlaces } from '../src/core.js';
 import { schematicSegments } from '../src/trip-map.js';
-import { findArticles, wikipediaLink } from '../src/place-info.js';
+import { findArticles, findPlaceArticles, suggestedLanguage, wikipediaLink } from '../src/place-info.js';
 import { computeFreeDay, defaultServices } from '../src/free-maps.js';
 
 test('corriger un lieu du dossier conserve identité, date et carnet d’origine', () => {
@@ -48,4 +48,38 @@ test('sauvegarde GeoJSON : conservation des descriptifs, sources et informations
   const [place] = importPlaces(JSON.stringify(data), 'lieux.geojson');
   assert.equal(place.description, 'Description'); assert.equal(place.practicalInfo, 'Accès'); assert.equal(place.address, 'Adresse');
   assert.equal(place.descriptionSource, 'https://fr.wikipedia.org/wiki/Lieu');
+});
+
+test('Wikipédia Suède : nom local, ville, pays localisé et exclusion de l’homonyme français', async () => {
+  const found = await findPlaceArticles({ name: 'Église Saint-Nicolas', localName: 'Storkyrkan', city: 'Stockholm', country: 'Suède', lat: 59.325, lng: 18.071 }, 'auto', async value => {
+    const url = new URL(value);
+    assert.equal(url.hostname, 'sv.wikipedia.org');
+    assert.equal(url.searchParams.get('gsrsearch'), 'Storkyrkan Stockholm Sverige');
+    return { ok: true, json: async () => ({ query: { pages: {
+      1: { title: 'Storkyrkan', extract: 'Description locale.', fullurl: 'https://sv.wikipedia.org/wiki/Storkyrkan', index: 1, coordinates: [{ lat: 59.325, lon: 18.071 }] },
+      2: { title: 'Homonyme français', extract: 'À ne pas utiliser.', fullurl: 'https://sv.wikipedia.org/wiki/Homonyme', index: 2, coordinates: [{ lat: 48.85, lon: 2.35 }] }
+    } } }) };
+  });
+  assert.equal(found.length, 1); assert.equal(found[0].verifiedLocation, true);
+  assert.equal(found[0].title, 'Storkyrkan');
+  assert.equal(suggestedLanguage({ country: 'Jordanie' }), 'ar');
+  assert.equal(suggestedLanguage({ country: 'France' }), 'fr');
+});
+
+test('nom local traduit : utilise le lien interlangue réel d’une fiche proche', async () => {
+  const calls = [];
+  const found = await findPlaceArticles({ name: 'Église Saint-Nicolas', city: 'Stockholm', country: 'Suède', lat: 59.325, lng: 18.071 }, 'auto', async value => {
+    const url = new URL(value); calls.push(url);
+    const pages = calls.length === 1 ? {} : { 1: { title: calls.length === 2 ? 'Église Saint-Nicolas' : 'Storkyrkan', extract: 'Résumé', fullurl: `https://${calls.length === 2 ? 'fr' : 'sv'}.wikipedia.org/wiki/Test`, coordinates: [{ lat: 59.325, lon: 18.071 }], langlinks: [{ lang: 'sv', '*': 'Storkyrkan' }] } };
+    return { ok: true, json: async () => ({ query: { pages } }) };
+  });
+  assert.equal(calls.length, 3); assert.ok(calls[2].searchParams.get('gsrsearch').startsWith('Storkyrkan'));
+  assert.equal(found[0].title, 'Storkyrkan');
+});
+
+test('ville et pays exigés, fiche non géolocalisée signalée au lieu de prétendre la vérifier', async () => {
+  await assert.rejects(findPlaceArticles({ name: 'Église', city: 'Paris', country: '' }), /pays/);
+  await assert.rejects(findPlaceArticles({ name: 'Église', city: '', country: 'France' }), /ville/);
+  const found = await findPlaceArticles({ name: 'Église', city: 'Paris', country: 'France' }, 'fr', async () => ({ ok: true, json: async () => ({ query: { pages: { 1: { title: 'Église', extract: 'Texte', fullurl: 'https://fr.wikipedia.org/wiki/Test' } } } }) }));
+  assert.equal(found[0].verifiedLocation, false);
 });

@@ -52,7 +52,7 @@ export async function findFreePlaces(place, services = readServices(), request =
   const relaxed = [simple || name, place.searchCity, place.country].filter(Boolean).join(', ');
   const engine = place.searchEngine || 'auto';
   const url = new URL(serviceURL(services.search));
-  url.search = new URLSearchParams({ q: query, format: 'jsonv2', addressdetails: '1', limit: '5', 'accept-language': 'fr' });
+  url.search = new URLSearchParams({ q: query, format: 'jsonv2', addressdetails: '1', namedetails: '1', limit: '5', 'accept-language': 'fr' });
   const identity = JSON.stringify([url.href, services.photon || defaultServices.photon, engine]);
   let cache = {};
   try { cache = JSON.parse(storage.getItem(cacheKey) || '{}'); } catch { /* Cache is optional. */ }
@@ -68,7 +68,7 @@ export async function findFreePlaces(place, services = readServices(), request =
       }
       results = data.filter(p => coordinates(p.lat, p.lon)).map(p => ({
     ...coordinates(p.lat, p.lon), name: p.name || String(p.display_name || place.name).split(',')[0],
-    address: p.display_name || '', country: p.address?.country || place.country,
+    address: p.display_name || '', country: p.address?.country || place.country, city: p.address?.city || p.address?.town || p.address?.village || p.address?.municipality || '', countryCode: p.address?.country_code || '', localName: p.namedetails?.name || p.name || '',
     url: ['node', 'way', 'relation'].includes(p.osm_type) && /^\d+$/.test(String(p.osm_id)) ? `https://www.openstreetmap.org/${p.osm_type}/${p.osm_id}` : '', source: 'OpenStreetMap'
   }));
     } catch (error) { failure = error; }
@@ -82,7 +82,7 @@ export async function findFreePlaces(place, services = readServices(), request =
       results = data.features.filter(f => f.geometry?.type === 'Point' && coordinates(f.geometry.coordinates?.[1], f.geometry.coordinates?.[0])).map(f => {
         const p = f.properties || {}, type = { N: 'node', W: 'way', R: 'relation' }[p.osm_type];
         return { ...coordinates(f.geometry.coordinates[1], f.geometry.coordinates[0]), name: p.name || name,
-          address: [...new Set([p.name, p.street, p.city, p.state, p.country].filter(Boolean))].join(', '), country: p.country || place.country,
+          address: [...new Set([p.name, p.street, p.city, p.state, p.country].filter(Boolean))].join(', '), country: p.country || place.country, city: p.city || '', countryCode: p.countrycode || '', localName: p.name || '',
           url: type && /^\d+$/.test(String(p.osm_id)) ? `https://www.openstreetmap.org/${type}/${p.osm_id}` : '', source: 'OpenStreetMap / Photon' };
       });
       failure = null;
@@ -95,6 +95,19 @@ export async function findFreePlaces(place, services = readServices(), request =
     storage.setItem(cacheKey, JSON.stringify(cache));
   } catch { /* A disabled cache must not discard search results. */ }
   return results;
+}
+
+export async function reverseFreePlace(place, services = readServices(), request = politeFetch) {
+  const point = coordinates(place.lat, place.lng);
+  if (!point) throw new Error('Des coordonnées sont nécessaires pour retrouver la ville.');
+  const url = new URL(serviceURL(services.search));
+  if (!/\/search$/.test(url.pathname)) throw new Error('Précisez la ville manuellement avec ce serveur personnalisé.');
+  url.pathname = url.pathname.replace(/\/search$/, '/reverse');
+  url.search = new URLSearchParams({ lat: String(point.lat), lon: String(point.lng), format: 'jsonv2', addressdetails: '1', namedetails: '1', zoom: '18' });
+  const data = await request(url.href);
+  if (data.error || !data.address) throw new Error('Ville introuvable : indiquez-la dans le formulaire.');
+  const a = data.address;
+  return { city: a.city || a.town || a.village || a.municipality || '', country: a.country || place.country, countryCode: a.country_code || '', localName: data.namedetails?.name || data.name || '', address: data.display_name || '' };
 }
 
 export async function computeFreeDay(day, mode, services = readServices(), request = politeFetch) {
