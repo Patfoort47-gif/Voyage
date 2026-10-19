@@ -2,6 +2,10 @@ import { planTrip } from './core.js';
 
 export const tripsKey = 'voyage.trips.v1';
 
+export function routeSignature(trip) {
+  return JSON.stringify([trip.id, trip.days, trip.mode, trip.fileOrder, trip.startId, trip.places.map(p => [p.id, p.lat, p.lng, p.googlePlaceId || ''])]);
+}
+
 export function formatTripCreatedAt(value) {
   const date = new Date(value || '');
   if (!Number.isFinite(date.getTime())) return 'Date de création inconnue';

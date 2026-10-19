@@ -1,12 +1,14 @@
+import { prepareDescription } from './descriptions.js';
 import { TripMap } from './trip-map.js';
-import { findPlaceArticles, wikipediaLink } from './place-info.js';
+import { findPlaceArticles, automaticArticle, wikipediaLink } from './place-info.js';
 import { findFreePlaces, computeFreeDay, formatFreeRoute, readServices, serviceURL, reverseFreePlace } from './free-maps.js';
 import { loadGoogle, findGooglePlaces, computeGoogleDay, formatGoogleRoute } from './google-maps.js';
-import { createTrip, loadTrips, persistTrips, formatTripCreatedAt, remainingPlaces, updateTripPlace } from './trips.js';
+import { createTrip, loadTrips, persistTrips, formatTripCreatedAt, remainingPlaces, updateTripPlace, routeSignature } from './trips.js';
 import { coordinates, fromURL, importPlaces, planTrip, mapsLinks, savedMapsURL, demo } from './core.js';
 
 const $ = s => document.querySelector(s);
 const key = 'voyage.places.v1';
+$('#global-notices').append($('#notice'));
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 let places = [];
 let trips = [];
@@ -17,6 +19,9 @@ const tripMap = new TripMap();
 let mapReady = Promise.resolve();
 let articleOptions = [], articleSource = '', articleGeneration = 0;
 let routeGeneration = 0;
+const routeCache = new Map();
+let displayedRouteKey = '', activeRouteKey = '';
+const routeKeyFor = record => JSON.stringify([routeSignature(record), mapsProvider, mapsProvider === 'free' ? readServices()[record.mode] : 'google']);
 let mapsProvider = 'free';
 try { mapsProvider = localStorage.getItem('voyage.maps.provider') === 'google' ? 'google' : 'free'; } catch {}
 let googleKey = '';
@@ -165,7 +170,7 @@ $('#place-form').addEventListener('submit', e => {
       if (!trip) throw new Error('Ce voyage a été supprimé.');
       const updated = updateTripPlace(trip, fields.id, p);
       storeTrips(trips.map(t => t.id === trip.id ? updated : t));
-      $('#place-dialog').close(); showTrip(updated); calculateRoutes(); notice('Le lieu est enregistré. Recalcul automatique de toutes les journées en cours.');
+      $('#place-dialog').close(); showTrip(updated); notice('Le lieu est enregistré. Les trajets sont conservés si sa localisation n’a pas changé.');
     } catch (error) { $('#place-editor-error').textContent = error.message; }
     return;
   }
@@ -194,8 +199,12 @@ $('#import-form').addEventListener('submit', async e => {
 $('#demo').addEventListener('click', () => { places = structuredClone(demo); save(); notice('Exemple chargé : 10 lieux au Portugal. Choisissez votre durée et créez le parcours.'); });
 function showTrip(record) {
   currentRecord = record;
-  routeGeneration++;
-  $('#google-routes').disabled = false;
+  const key = routeKeyFor(record);
+  if (displayedRouteKey !== key) routeGeneration++;
+  displayedRouteKey = key;
+  if (!routeCache.has(key)) routeCache.set(key, { days: [], attempted: false, status: '' });
+  const cached = routeCache.get(key);
+  $('#google-routes').disabled = activeRouteKey === key;
   $('#google-routes-status').textContent = `Calcul à la demande, hors visites. Liaison depuis la veille incluse ; aucun hébergement ni retour. ${mapsProvider === 'free' ? 'Source : OpenStreetMap / OSRM. Estimation sans trafic en temps réel.' : 'Source : Google Maps. Trafic au moment du calcul, pas de prévision pour la date du voyage.'}`;
   const trip = planTrip(record.places, record.days, record.startId, record.fileOrder);
   const mode = record.mode;
@@ -209,7 +218,13 @@ function showTrip(record) {
 
   $('#results').dataset.tripId = record.id;
   $('#results').hidden = false;
-  mapReady = tripMap.show(trip);
+  document.body.dataset.view = 'trip';
+  const hash = '#voyage=' + encodeURIComponent(record.id);
+  if (location.hash !== hash) history.pushState(null, '', hash);
+  cached.days.forEach((day, i) => { const target = document.querySelector(`[data-google-day="${i}"]`); if (target) target.textContent = day.text; });
+  if (cached.status) $('#google-routes-status').textContent = cached.status;
+  mapReady = tripMap.show(trip).then(() => cached.days.forEach((day, i) => { if (day.result?.geometry) tripMap.setRoute(i, day.result.geometry); }));
+  if (!cached.attempted && activeRouteKey !== key) calculateRoutes();
   $('#results').scrollIntoView({ behavior: 'smooth' });
 }
 $('#plan-form').addEventListener('submit', e => {
@@ -265,13 +280,21 @@ $('#wiki-search').addEventListener('click', async () => {
   const generation = ++articleGeneration;
   $('#wiki-status').textContent = 'Recherche de fiches Wikipédia…'; $('#wiki-options').innerHTML = '';
   try {
-    const context = articleContext();
-    context.localName = $('#wiki-query').value.trim() || context.localName;
-    if (!context.city) throw new Error('Renseignez la ville du lieu, ou cliquez sur « Retrouver la ville et le nom local », puis relancez.');
-    const options = await findPlaceArticles(context, $('#wiki-language').value);
+    let context = articleContext();
+    context.localName = context.localName || $('#wiki-query').value.trim();
+    const prepared = $('#wiki-language').value === 'auto' ? await prepareDescription(context) : null;
+    if (prepared) {
+      context = prepared.context;
+      const f = $('#place-form'); f.elements.city.value = context.city || ''; f.elements.localName.value = context.localName || '';
+      $('#wiki-query').value = context.localName || context.name;
+      if (!f.elements.country.value) f.elements.country.value = context.country || '';
+    }
+    const options = prepared ? prepared.options : await findPlaceArticles(context, $('#wiki-language').value);
     if (generation !== articleGeneration) return;
     articleOptions = options;
-    $('#wiki-status').textContent = options.length ? 'Vérifiez la fiche avant d’utiliser son descriptif.' : 'Aucune fiche trouvée. Essayez le nom local, l’anglais, ou saisissez votre descriptif.';
+    const automatic = prepared ? prepared.automatic : automaticArticle(context, options);
+    if (automatic) { $('#place-form').elements.description.value = automatic.description; articleSource = automatic.sourceURL; }
+    $('#wiki-status').textContent = automatic ? 'Premier résultat concordant sélectionné : nom et position correspondent. Enregistrez le lieu.' : options.length ? 'Correspondance incertaine : choisissez la bonne fiche.' : prepared?.warning || 'Aucune fiche trouvée. Précisez le nom, la ville et le pays ou saisissez un descriptif.';
     $('#wiki-options').innerHTML = options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.title)}</strong><p class="small muted">${escape(o.language || '')} · ${o.verifiedLocation ? `Position de la fiche à ${o.km.toFixed(1)} km du lieu validé` : 'Position de la fiche non vérifiée : contrôlez la ville et le pays'}</p><p class="small muted">${escape(o.description)}</p><a href="${escape(o.sourceURL)}" target="_blank" rel="noopener noreferrer">Lire la fiche Wikipédia ↗</a><button type="button" class="secondary" data-article="${i}">Utiliser ce descriptif</button></article>`).join('');
   } catch (error) { if (generation === articleGeneration) $('#wiki-status').textContent = error.message; }
 });
@@ -284,6 +307,7 @@ $('#wiki-options').addEventListener('click', e => {
   $('#wiki-status').textContent = 'Descriptif ajouté au formulaire. Enregistrez le lieu pour le conserver.';
 });
 $('#place-dialog').addEventListener('close', () => { articleGeneration++; });
+$('#wiki-details').addEventListener('toggle', () => { if ($('#wiki-details').open && !$('#place-form').elements.description.value.trim() && !$('#wiki-status').textContent) $('#wiki-search').click(); });
 $('#export').addEventListener('click', () => {
   const data = { type: 'FeatureCollection', features: places.map(p => ({ type: 'Feature', geometry: coordinates(p.lat, p.lng) ? { type: 'Point', coordinates: [p.lng, p.lat] } : null, properties: { name: p.name, country: p.country, category: p.category, note: p.note, tags: p.tags || '', googlePlaceId: p.googlePlaceId || '', description: p.description || '', city: p.city || '', localName: p.localName || '', countryCode: p.countryCode || '', descriptionSource: p.descriptionSource || '', address: p.address || '', practicalInfo: p.practicalInfo || '', url: p.url } })) };
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/geo+json' }));
@@ -345,7 +369,7 @@ $('#trip-form').addEventListener('submit', e => {
       mode: form.elements.mode.value, startId: form.elements.startId.value, fileOrder: form.elements.fileOrder.checked,
       places: editingPlaces.filter(p => p.selected) }, previous);
     storeTrips(trips.map(t => t.id === record.id ? record : t));
-    $('#trip-dialog').close(); showTrip(record); calculateRoutes(); notice(`Le voyage « ${record.name} » a été mis à jour. Recalcul de toutes les journées en cours.`);
+    $('#trip-dialog').close(); showTrip(record); notice(`Le voyage « ${record.name} » a été mis à jour. Le calcul est actualisé uniquement si le parcours a changé.`);
   } catch (error) { alert(error.message); }
 });
 function resultLink(value) {
@@ -475,7 +499,7 @@ async function resolveNext(refineSearch = false) {
     $('#resolve-dialog').close();
     if (resolveTripId) {
       const trip = trips.find(t => t.id === resolveTripId);
-      if (trip) { showTrip(trip); calculateRoutes(); }
+      if (trip) { showTrip(trip); }
     }
     notice('Recherche terminée. Les correspondances confirmées ont été enregistrées. Relancez pour traiter les autres lieux si nécessaire.');
     return;
@@ -528,7 +552,7 @@ function confirmResolved(found) {
       if (!previous) throw new Error('Ce voyage a été supprimé.');
       const updated = { ...previous, places: previous.places.map(p => p.id === original.id ? { ...p, ...patch } : p), updatedAt: new Date().toISOString() };
       storeTrips(trips.map(t => t.id === updated.id ? updated : t));
-      if (currentRecord?.id === updated.id) { currentRecord = updated; showTrip(updated); calculateRoutes(); }
+      if (currentRecord?.id === updated.id) { currentRecord = updated; showTrip(updated); }
     } else {
       const next = places.map(p => p.id === original.id ? { ...p, ...patch } : p);
       localStorage.setItem(key, JSON.stringify(next)); places = next; render();
@@ -548,46 +572,131 @@ $('#resolve-manual-form').addEventListener('submit', e => {
   if (!point) { $('#resolve-status').textContent = 'Indiquez une latitude et une longitude valides.'; return; }
   confirmResolved({ ...point, country: form.elements.country.value.trim() || $('#resolve-search-country').value.trim() });
 });
-async function calculateRoutes() {
-  if (!currentRecord) return;
-  if ($('#google-routes').disabled) return;
-  const record = currentRecord, generation = routeGeneration;
+async function calculateRoutes(force = false) {
+  if (!currentRecord || $('#google-routes').disabled) return;
+  const record = currentRecord, key = routeKeyFor(record), generation = routeGeneration;
+  const cached = routeCache.get(key);
+  if (!cached || (cached.attempted && !force)) return;
+  cached.attempted = true; activeRouteKey = key;
   const trip = planTrip(record.places, record.days, record.startId, record.fileOrder);
-  const button = $('#google-routes'); button.disabled = true;
+  $('#google-routes').disabled = true;
   let passed = 0, failed = 0;
   try {
     await mapReady;
     if (generation !== routeGeneration) return;
     const provider = mapsProvider;
     let Route;
-    if (provider === 'google') {
-      const maps = await requireGoogle();
-      ({ Route } = await maps.importLibrary('routes'));
-      if (!Route?.computeRoutes) throw new Error('La bibliothèque Routes Google n’est pas disponible. Vérifiez Maps JavaScript API et Routes API.');
-    }
+    if (provider === 'google') ({ Route } = await (await requireGoogle()).importLibrary('routes'));
     for (let i = 0; i < trip.days.length; i++) {
       if (generation !== routeGeneration) return;
-      const target = document.querySelector(`[data-google-day="${i}"]`);
-      target.textContent = 'Calcul du trajet en cours…';
+      document.querySelector(`[data-google-day="${i}"]`).textContent = 'Calcul du trajet en cours…';
       try {
         const result = provider === 'free' ? await computeFreeDay(trip.days[i], record.mode) : await computeGoogleDay(trip.days[i], record.mode, Route);
         if (generation !== routeGeneration) return;
-        target.textContent = provider === 'free' ? formatFreeRoute(result) : formatGoogleRoute(result);
-        if (provider === 'free' && result.geometry) {
-          tripMap.setRoute(i, result.geometry);
-          $('#map-status').textContent = 'Traits pleins : trajets OSRM calculés. Pointillés restants : liaisons schématiques non calculées. Utilisez la légende pour isoler chaque jour.';
-        }
+        const text = provider === 'free' ? formatFreeRoute(result) : formatGoogleRoute(result);
+        cached.days[i] = { text, result: provider === 'free' ? result : null };
+        document.querySelector(`[data-google-day="${i}"]`).textContent = text;
+        await mapReady;
+        if (generation !== routeGeneration) return;
+        if (provider === 'free' && result.geometry) { tripMap.setRoute(i, result.geometry); $('#map-status').textContent = 'Traits pleins : routes calculées. Pointillés : liaisons schématiques non calculées.'; }
         passed++;
       } catch (error) {
         if (generation !== routeGeneration) return;
-        target.textContent = `Trajet indisponible : ${googleError(error)}`; failed++;
+        const text = `Trajet indisponible : ${googleError(error)}`;
+        cached.days[i] = { text }; document.querySelector(`[data-google-day="${i}"]`).textContent = text; failed++;
       }
     }
-    $('#google-routes-status').textContent = `${passed} journée(s) calculée(s), ${failed} non calculée(s). Source : ${provider === 'free' ? 'OpenStreetMap / OSRM (sans trafic)' : 'Google Maps'}, calcul à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}. Temps de déplacement uniquement, hors visites. Liaison depuis la veille incluse ; aucun hébergement ni retour. Les durées restent indicatives. Recalculez à votre prochaine visite.`;
-  } catch (error) { if (generation === routeGeneration) $('#google-routes-status').textContent = googleError(error); }
-  finally { if (generation === routeGeneration) button.disabled = false; }
+    cached.status = `${passed} journée(s) calculée(s), ${failed} non calculée(s). ${provider === 'free' ? 'OpenStreetMap / OSRM sans trafic' : 'Google Maps'}. Temps de déplacement uniquement, hors visites ; liaison depuis la veille incluse. Résultats conservés pendant cette consultation jusqu’à modification du parcours.`;
+    $('#google-routes-status').textContent = cached.status;
+  } catch (error) { if (generation === routeGeneration) { cached.status = googleError(error); $('#google-routes-status').textContent = cached.status; } }
+  finally {
+    if (activeRouteKey === key) activeRouteKey = '';
+    if (generation === routeGeneration) $('#google-routes').disabled = false;
+    else cached.attempted = false;
+  }
 }
-$('#google-routes').addEventListener('click', calculateRoutes);
+$('#google-routes').addEventListener('click', () => calculateRoutes(true));
+let descriptionSession = null, descriptionVersion = 0;
+function descriptionTrip() { return trips.find(t => t.id === descriptionSession?.tripId); }
+function renderDescriptionMenu() {
+  const trip = descriptionTrip(); if (!trip) return;
+  const missing = trip.places.filter(p => !p.description?.trim());
+  $('#description-progress').textContent = `${missing.length} descriptif(s) restant(s) · ${descriptionSession.saved} complété(s) pendant cette session`;
+  $('#description-menu').innerHTML = missing.map(p => `<div class="description-menu-row"><span>${escape(p.name)} · ${escape(p.city || p.country)}</span><button type="button" class="quiet" data-description-place="${escape(p.id)}">Rechercher</button></div>`).join('') || '<p class="muted">Tous les lieux ont un descriptif.</p>';
+  $('#description-run').disabled = !missing.length || Boolean(descriptionSession.queue.length);
+}
+$('#descriptions-start').addEventListener('click', () => {
+  if (!currentRecord) return;
+  descriptionSession = { tripId: currentRecord.id, queue: [], options: [], context: null, saved: 0 };
+  descriptionVersion++; $('#description-current').hidden = true;
+  renderDescriptionMenu(); $('#description-dialog').showModal();
+});
+async function descriptionStep(refined = null) {
+  const version = ++descriptionVersion, session = descriptionSession;
+  if (!session) return;
+  const trip = descriptionTrip(), p = trip?.places.find(p => p.id === session.queue[0]);
+  renderDescriptionMenu();
+  if (!p) { $('#description-current').hidden = true; $('#description-run').disabled = !trip?.places.some(p => !p.description?.trim()); return; }
+  $('#description-current').hidden = false; $('#description-title').textContent = p.name;
+  $('#description-status').textContent = 'Recherche de la ville, du nom local et du descriptif…'; $('#description-options').innerHTML = '';
+  const form = $('#description-refine');
+  for (const field of ['name', 'localName', 'city', 'country']) form.elements[field].value = refined?.[field] || p[field] || '';
+  try {
+    const prepared = await prepareDescription({ ...p, ...refined });
+    if (version !== descriptionVersion) return;
+    session.context = prepared.context; session.options = prepared.options;
+    for (const field of ['name', 'localName', 'city', 'country']) form.elements[field].value = prepared.context[field] || '';
+    if (prepared.automatic) { saveBatchDescription(prepared.automatic); return; }
+    $('#description-status').textContent = prepared.warning || (prepared.options.length ? 'Nom ou position incertains : choisissez la bonne fiche.' : 'Aucune fiche trouvée : précisez le nom et la ville ou passez au suivant.');
+    $('#description-options').innerHTML = prepared.options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.title)}</strong><p class="small muted">${escape(o.language)} · ${o.verifiedLocation ? `${o.km.toFixed(1)} km du lieu` : 'Position non vérifiée'}</p><p>${escape(o.description)}</p><a href="${escape(o.sourceURL)}" target="_blank" rel="noopener noreferrer">Vérifier la fiche ↗</a><button class="secondary" type="button" data-description-choice="${i}">Choisir et continuer</button></article>`).join('');
+  } catch (error) { if (version === descriptionVersion) $('#description-status').textContent = error.message; }
+}
+function saveBatchDescription(article) {
+  const session = descriptionSession, trip = descriptionTrip();
+  if (!session || !trip || !session.context) return;
+  try {
+    const p = trip.places.find(p => p.id === session.queue[0]);
+    const context = session.context;
+    const updated = updateTripPlace(trip, p.id, { description: article.description, descriptionSource: article.sourceURL, city: context.city || p.city, localName: context.localName || p.localName, countryCode: context.countryCode || p.countryCode });
+    storeTrips(trips.map(t => t.id === trip.id ? updated : t));
+    if (currentRecord?.id === trip.id) currentRecord = updated;
+    session.saved++; session.queue.shift(); renderDescriptionMenu(); descriptionStep();
+  } catch (error) { $('#description-status').textContent = `Descriptif non enregistré : ${error.message}`; }
+}
+$('#description-run').addEventListener('click', () => {
+  const trip = descriptionTrip(); if (!trip) return;
+  descriptionSession.queue = trip.places.filter(p => !p.description?.trim()).map(p => p.id); descriptionStep();
+});
+$('#description-menu').addEventListener('click', e => {
+  const button = e.target.closest('[data-description-place]');
+  if (button && descriptionSession) { descriptionSession.queue = [button.dataset.descriptionPlace]; descriptionStep(); }
+});
+$('#description-options').addEventListener('click', e => {
+  const button = e.target.closest('[data-description-choice]');
+  if (button) saveBatchDescription(descriptionSession?.options[Number(button.dataset.descriptionChoice)]);
+});
+$('#description-refine').addEventListener('submit', e => { e.preventDefault(); descriptionStep(Object.fromEntries(new FormData(e.target))); });
+$('#description-skip').addEventListener('click', () => { if (descriptionSession) { descriptionSession.queue.shift(); descriptionStep(); } });
+$('#description-close').addEventListener('click', () => $('#description-dialog').close());
+$('#description-dialog').addEventListener('close', () => {
+  descriptionVersion++;
+  const trip = descriptionTrip(); descriptionSession = null;
+  if (trip && currentRecord?.id === trip.id) showTrip(trip);
+});
+function showHome() {
+  document.body.dataset.view = 'home'; $('#results').hidden = true; window.scrollTo({ top: 0 });
+}
+function restorePage() {
+  if (location.hash.startsWith('#voyage=')) {
+    let id; try { id = decodeURIComponent(location.hash.slice(8)); } catch { showHome(); return; }
+    const trip = trips.find(t => t.id === id);
+    if (trip) { showTrip(trip); return; }
+  }
+  showHome();
+}
+window.addEventListener('hashchange', restorePage);
 renderTrips();
 $('#print').addEventListener('click', () => window.print());
 render();
+
+restorePage();

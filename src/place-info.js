@@ -34,30 +34,35 @@ export async function findArticles(query, language = 'fr', request = fetch) {
   return Object.values(data.query?.pages || {}).filter(p => p.extract && wikipediaLink(p.fullurl)).sort((a, b) => a.index - b.index).map(p => ({ title: p.title, description: p.extract, sourceURL: wikipediaLink(p.fullurl), location: coordinates(p.coordinates?.[0]?.lat, p.coordinates?.[0]?.lon), translations: p.langlinks || [], language }));
 }
 
+export function automaticArticle(place, articles) {
+  const key = text => normalize(String(text || '').replace(/\([^)]*\)/g, '')).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const names = [place.name, place.localName].filter(Boolean).map(key), city = key(place.city);
+  return articles.find(a => a.verifiedLocation && a.km <= 1 && names.some(name => [name, `${name} ${city}`, `${name} de ${city}`].includes(key(a.title)))) || null;
+}
+
 export async function findPlaceArticles(place, language = 'auto', request = fetch) {
   if (!place.country?.trim()) throw new Error('Précisez le pays du lieu avant de rechercher une fiche.');
   if (!place.city?.trim()) throw new Error('Précisez la ville du lieu pour distinguer les homonymes.');
-  const localLanguage = suggestedLanguage(place), code = countryCode(place.country, place.countryCode);
-  const selected = language === 'auto' ? localLanguage : language;
-  const localizedCountry = code ? new Intl.DisplayNames([selected], { type: 'region' }).of(code) : place.country;
-  const query = [...new Set([place.localName || place.name, place.city, localizedCountry].filter(Boolean))].join(' ');
-  const candidates = await findArticles(query, selected, request);
-  const position = coordinates(place.lat, place.lng);
-  // A matching name alone never authorizes a fiche from another country.
-  const checked = candidates.flatMap(article => {
-    const km = position && article.location ? distance(position, article.location) : null;
-    return km !== null && km > 25 ? [] : [{ ...article, km, verifiedLocation: km !== null, query }];
-  });
-  if (checked.length || language !== 'auto' || selected === 'fr') return checked;
-  // A French name may only exist on French Wikipedia. Read real interlanguage
-  // titles from that page rather than inventing a local translation.
-  const french = await findArticles([place.name, place.city, place.country].filter(Boolean).join(' '), 'fr', request);
-  const valid = french.filter(a => !position || !a.location || distance(position, a.location) <= 25);
-  const linked = valid.find(a => a.location && position && distance(position, a.location) <= 25)?.translations.find(t => t.lang === localLanguage);
-  if (linked?.['*']) {
-    const translated = await findArticles([linked['*'], place.city, localizedCountry].filter(Boolean).join(' '), localLanguage, request);
-    const nearby = translated.filter(a => !position || !a.location || distance(position, a.location) <= 25);
-    if (nearby.length) return nearby.map(a => ({ ...a, km: position && a.location ? distance(position, a.location) : null, verifiedLocation: Boolean(position && a.location) }));
+  const code = countryCode(place.country, place.countryCode), position = coordinates(place.lat, place.lng);
+  const order = language === 'auto' ? [...new Set(['fr', suggestedLanguage(place)])] : [language];
+  let unverified = [], failure;
+  for (const lang of order) {
+    const country = code ? new Intl.DisplayNames([lang], { type: 'region' }).of(code) : place.country;
+    const names = [...new Set([place.localName, place.name].filter(Boolean))];
+    for (const name of names) {
+      const query = [...new Set([name, place.city, country].filter(Boolean))].join(' ');
+      let articles;
+      try { articles = await findArticles(query, lang, request); }
+      catch (error) { failure = error; continue; }
+      const checked = articles.flatMap(a => {
+        const km = position && a.location ? distance(position, a.location) : null;
+        return km !== null && km > 25 ? [] : [{ ...a, km, verifiedLocation: km !== null, query }];
+      });
+      if (checked.length && (language !== 'auto' || automaticArticle(place, checked))) return checked;
+      if (checked.length && !unverified.length) unverified = checked;
+    }
   }
-  return valid.map(a => ({ ...a, km: position && a.location ? distance(position, a.location) : null, verifiedLocation: Boolean(position && a.location) }));
+  if (unverified.length) return unverified;
+  if (failure) throw failure;
+  return [];
 }

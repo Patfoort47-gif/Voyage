@@ -1,4 +1,4 @@
-import { coordinates, fromURL, mapsReference } from './core.js';
+import { coordinates, fromURL, mapsReference, distance } from './core.js';
 
 export const defaultServices = {
   search: 'https://nominatim.openstreetmap.org/search',
@@ -107,7 +107,7 @@ export async function reverseFreePlace(place, services = readServices(), request
   const data = await request(url.href);
   if (data.error || !data.address) throw new Error('Ville introuvable : indiquez-la dans le formulaire.');
   const a = data.address;
-  return { city: a.city || a.town || a.village || a.municipality || '', country: a.country || place.country, countryCode: a.country_code || '', localName: data.namedetails?.name || data.name || '', address: data.display_name || '' };
+  return { distanceKm: coordinates(data.lat, data.lon) ? distance(point, coordinates(data.lat, data.lon)) : null, city: a.city || a.town || a.village || a.municipality || '', country: a.country || place.country, countryCode: a.country_code || '', localName: data.namedetails?.name || data.name || '', address: data.display_name || '' };
 }
 
 export async function computeFreeDay(day, mode, services = readServices(), request = politeFetch) {

@@ -51,7 +51,7 @@ test('sauvegarde GeoJSON : conservation des descriptifs, sources et informations
 });
 
 test('Wikipédia Suède : nom local, ville, pays localisé et exclusion de l’homonyme français', async () => {
-  const found = await findPlaceArticles({ name: 'Église Saint-Nicolas', localName: 'Storkyrkan', city: 'Stockholm', country: 'Suède', lat: 59.325, lng: 18.071 }, 'auto', async value => {
+  const found = await findPlaceArticles({ name: 'Église Saint-Nicolas', localName: 'Storkyrkan', city: 'Stockholm', country: 'Suède', lat: 59.325, lng: 18.071 }, 'sv', async value => {
     const url = new URL(value);
     assert.equal(url.hostname, 'sv.wikipedia.org');
     assert.equal(url.searchParams.get('gsrsearch'), 'Storkyrkan Stockholm Sverige');
@@ -66,14 +66,14 @@ test('Wikipédia Suède : nom local, ville, pays localisé et exclusion de l’h
   assert.equal(suggestedLanguage({ country: 'France' }), 'fr');
 });
 
-test('nom local traduit : utilise le lien interlangue réel d’une fiche proche', async () => {
+test('français prioritaire, puis langue du pays avec le nom local si aucune fiche française', async () => {
   const calls = [];
-  const found = await findPlaceArticles({ name: 'Église Saint-Nicolas', city: 'Stockholm', country: 'Suède', lat: 59.325, lng: 18.071 }, 'auto', async value => {
+  const found = await findPlaceArticles({ name: 'Église Saint-Nicolas', localName: 'Storkyrkan', city: 'Stockholm', country: 'Suède', lat: 59.325, lng: 18.071 }, 'auto', async value => {
     const url = new URL(value); calls.push(url);
-    const pages = calls.length === 1 ? {} : { 1: { title: calls.length === 2 ? 'Église Saint-Nicolas' : 'Storkyrkan', extract: 'Résumé', fullurl: `https://${calls.length === 2 ? 'fr' : 'sv'}.wikipedia.org/wiki/Test`, coordinates: [{ lat: 59.325, lon: 18.071 }], langlinks: [{ lang: 'sv', '*': 'Storkyrkan' }] } };
+    const pages = url.hostname === 'fr.wikipedia.org' ? {} : { 1: { title: 'Storkyrkan', extract: 'Résumé', fullurl: 'https://sv.wikipedia.org/wiki/Test', coordinates: [{ lat: 59.325, lon: 18.071 }] } };
     return { ok: true, json: async () => ({ query: { pages } }) };
   });
-  assert.equal(calls.length, 3); assert.ok(calls[2].searchParams.get('gsrsearch').startsWith('Storkyrkan'));
+  assert.equal(calls.length, 3); assert.equal(calls[0].hostname, 'fr.wikipedia.org'); assert.equal(calls[1].hostname, 'fr.wikipedia.org'); assert.equal(calls[2].hostname, 'sv.wikipedia.org'); assert.ok(calls[2].searchParams.get('gsrsearch').startsWith('Storkyrkan'));
   assert.equal(found[0].title, 'Storkyrkan');
 });
 
