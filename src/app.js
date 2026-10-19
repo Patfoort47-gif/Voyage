@@ -1,3 +1,4 @@
+import { destinationTheme, themeStyle, themeIllustration } from './destination-theme.js';
 import { prepareDescription } from './descriptions.js';
 import { TripMap } from './trip-map.js';
 import { findPlaceArticles, automaticArticle, wikipediaLink } from './place-info.js';
@@ -8,6 +9,7 @@ import { coordinates, fromURL, importPlaces, planTrip, mapsLinks, savedMapsURL, 
 
 const $ = s => document.querySelector(s);
 const key = 'voyage.places.v1';
+$('#hero-art').innerHTML = themeIllustration(destinationTheme({ country: 'Portugal' }));
 $('#global-notices').append($('#notice'));
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 let places = [];
@@ -86,7 +88,7 @@ function render() {
   const visible = filtered();
   $('#delete-visible').disabled = !visible.length;
   $('#delete-visible').textContent = `Supprimer tous les lieux affichés (${visible.length})`;
-  $('#places').innerHTML = visible.map(p => `<div class="place"><input type="checkbox" data-select="${escape(p.id)}" aria-label="Sélectionner ${escape(p.name)}" ${p.selected ? 'checked' : ''}><div class="place-icon" aria-hidden="true">${p.category === 'Nature' ? '♧' : '⌁'}</div><div class="place-info"><strong>${escape(p.name)}</strong><p>${escape(p.country || 'Pays à compléter')} · ${escape(p.category)}</p>${!coordinates(p.lat, p.lng) ? '<p class="missing">Sans coordonnées · répartition dans l’ordre disponible</p>' : ''}${p.tags ? `<p>Tags : ${escape(p.tags)}</p>` : ''}${p.note ? `<p class="place-note">${escape(p.note)}</p>` : ''}${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Voir le lieu dans Google Maps ↗</a>` : ''}</div><div class="place-actions"><button class="quiet" data-locate="${escape(p.id)}">Retrouver le lieu</button><button class="quiet" data-edit="${escape(p.id)}">Modifier</button><button class="quiet" data-delete="${escape(p.id)}" aria-label="Supprimer ${escape(p.name)}">✕</button></div></div>`).join('') || (places.length ? '<p class="muted">Aucun lieu ne correspond à cette recherche.</p>' : '');
+  $('#places').innerHTML = visible.map(p => `<div class="place"><input type="checkbox" data-select="${escape(p.id)}" aria-label="Sélectionner ${escape(p.name)}" ${p.selected ? 'checked' : ''}><div class="place-icon" aria-hidden="true">${p.category === 'Nature' ? '♧' : '⌁'}</div><div class="place-info"><strong>${escape(p.name)}</strong><p>${escape(p.country || 'Pays à compléter')} · ${escape(p.category)}</p>${!coordinates(p.lat, p.lng) ? '<p class="missing">Sans coordonnées · répartition dans l’ordre disponible</p>' : ''}${p.tags ? `<p>Tags : ${escape(p.tags)}</p>` : ''}${p.note ? `<p class="place-note">${escape(p.note)}</p>` : ''}${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Voir le lieu dans Google Maps →</a>` : ''}</div><div class="place-actions"><button class="quiet" data-locate="${escape(p.id)}">Retrouver le lieu</button><button class="quiet" data-edit="${escape(p.id)}">Modifier</button><button class="quiet" data-delete="${escape(p.id)}" aria-label="Supprimer ${escape(p.name)}">✕</button></div></div>`).join('') || (places.length ? '<p class="muted">Aucun lieu ne correspond à cette recherche.</p>' : '');
   renderStart();
   renderMissing();
 }
@@ -197,8 +199,22 @@ $('#import-form').addEventListener('submit', async e => {
   finally { button.disabled = false; }
 });
 $('#demo').addEventListener('click', () => { places = structuredClone(demo); save(); notice('Exemple chargé : 10 lieux au Portugal. Choisissez votre durée et créez le parcours.'); });
+function setNav(view) {
+  document.querySelectorAll('[data-nav]').forEach(link => {
+    const active = link.dataset.nav === view;
+    if (active) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
+  });
+}
+function setDestination(theme) {
+  for (const field of ['accent', 'dark', 'soft', 'highlight']) document.body.style.setProperty('--destination-' + (field === 'highlight' ? 'pop' : field), theme[field]);
+  document.body.dataset.destination = theme.id;
+}
 function showTrip(record) {
   currentRecord = record;
+  const theme = destinationTheme(record);
+  setDestination(theme); setNav('trips');
+  $('#trips-page').hidden = true;
+  $('#trip-destination-banner').innerHTML = `<div class="destination-banner" style="${themeStyle(theme)}"><div class="destination-banner-copy"><span class="destination-chip">${escape(record.country)} · ${theme.code}</span><h2>${escape(record.name)}</h2><p>${escape(theme.label)}</p><div class="destination-pills"><span>◷ ${record.days} jours</span><span>⌁ ${record.places.length} étape${record.places.length > 1 ? 's' : ''}</span><span>${record.mode === 'walking' ? 'À pied' : 'En voiture'}</span></div></div>${themeIllustration(theme)}</div>`;
   const key = routeKeyFor(record);
   if (displayedRouteKey !== key) routeGeneration++;
   displayedRouteKey = key;
@@ -213,12 +229,13 @@ function showTrip(record) {
     $('#result-summary').textContent = `${record.places.length} lieux · ${trip.days.length} jours avec des visites · ${trip.fileOrder ? 'Ordre du carnet conservé (sauf le premier lieu si vous en avez choisi un). Aucun tri par proximité ni calcul des distances ou temps de trajet. Google Maps recherchera les étapes par nom et pays si elles n’ont pas de coordonnées : vérifiez chaque correspondance.' : `${Math.round(km)} km à vol d’oiseau entre les étapes.`} ${trip.unusedDays ? `${trip.unusedDays} jour(s) libre(s) pour prolonger les visites ou vous reposer.` : ''} Parcours indicatif, sans hébergement ni retour au point de départ.`;
     $('#day-cards').innerHTML = trip.days.map((day, i) => {
       const hours = day.stops.length * 1.5;
-      return `<article class="day-card"><span class="day-number">JOUR ${String(i + 1).padStart(2, '0')}</span><h3>${escape(day.stops[0].name)}</h3><p class="google-day-metric" data-google-day="${i}">Trajet : kilomètres et durée non calculés</p><p class="muted">${day.stops.length} visite(s) · ${trip.fileOrder ? 'ordre du carnet' : `${Math.round(day.km)} km à vol d’oiseau`}</p>${day.previous ? `<p class="small muted">Départ du lien Maps : ${escape(day.previous.name)}, dernière étape de la veille.</p>` : ''}<ol>${day.stops.map(p => `<li><strong>${escape(p.name)}</strong><small>${escape(p.category)}</small><div class="place-details">${p.description ? `<p>${escape(p.description)}</p>` : '<p class="muted small">Descriptif non renseigné. Ajoutez une fiche ou vos informations.</p>'}${wikipediaLink(p.descriptionSource) ? `<a class="place-link" href="${escape(wikipediaLink(p.descriptionSource))}" target="_blank" rel="noopener noreferrer">Source : Wikipédia · CC BY-SA ↗</a>` : ''}${p.address ? `<p><strong>Adresse :</strong> ${escape(p.address)}</p>` : ''}${p.practicalInfo ? `<p><strong>À savoir :</strong> ${escape(p.practicalInfo)}</p>` : ''}${p.note ? `<p><strong>Vos notes :</strong> ${escape(p.note)}</p>` : ''}</div><div class="place-tools"><button type="button" class="quiet" data-folder-place="${escape(p.id)}">Modifier ce lieu / informations</button><button type="button" class="quiet" data-folder-locate="${escape(p.id)}">Corriger la localisation</button></div>${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Lien Maps enregistré ↗</a>` : ''}</li>`).join('')}</ol><p class="small muted">Visites seules : environ ${Math.ceil(hours)} h (hypothèse : 1 h 30 par lieu). Le temps de déplacement calculé s’ajoute à ce budget.</p>${hours > 8 || day.stops.length * 1.5 > 8 ? '<p class="warning">Journée probablement trop chargée. Ajoutez des jours ou retirez des lieux, puis vérifiez les vrais trajets.</p>' : ''}${mapsLinks(day, mode).map((url, j, links) => `<a class="secondary" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Ouvrir dans Maps${links.length > 1 ? ` · partie ${j + 1}` : ''} ↗</a>`).join('')}</article>`;
+      return `<article class="day-card"><span class="day-number">JOUR ${String(i + 1).padStart(2, '0')}</span><h3>${escape(day.stops[0].name)}</h3><p class="google-day-metric" data-google-day="${i}">Trajet : kilomètres et durée non calculés</p><p class="muted">${day.stops.length} visite(s) · ${trip.fileOrder ? 'ordre du carnet' : `${Math.round(day.km)} km à vol d’oiseau`}</p>${day.previous ? `<p class="small muted">Départ du lien Maps : ${escape(day.previous.name)}, dernière étape de la veille.</p>` : ''}<ol>${day.stops.map(p => `<li><strong>${escape(p.name)}</strong><small>${escape(p.category)}</small><div class="place-details">${p.description ? `<p>${escape(p.description)}</p>` : '<p class="muted small">Descriptif non renseigné. Ajoutez une fiche ou vos informations.</p>'}${wikipediaLink(p.descriptionSource) ? `<a class="place-link" href="${escape(wikipediaLink(p.descriptionSource))}" target="_blank" rel="noopener noreferrer">Source : Wikipédia · CC BY-SA →</a>` : ''}${p.address ? `<p><strong>Adresse :</strong> ${escape(p.address)}</p>` : ''}${p.practicalInfo ? `<p><strong>À savoir :</strong> ${escape(p.practicalInfo)}</p>` : ''}${p.note ? `<p><strong>Vos notes :</strong> ${escape(p.note)}</p>` : ''}</div><div class="place-tools"><button type="button" class="quiet" data-folder-place="${escape(p.id)}">Modifier ce lieu / informations</button><button type="button" class="quiet" data-folder-locate="${escape(p.id)}">Corriger la localisation</button></div>${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Lien Maps enregistré →</a>` : ''}</li>`).join('')}</ol><p class="small muted">Visites seules : environ ${Math.ceil(hours)} h (hypothèse : 1 h 30 par lieu). Le temps de déplacement calculé s’ajoute à ce budget.</p>${hours > 8 || day.stops.length * 1.5 > 8 ? '<p class="warning">Journée probablement trop chargée. Ajoutez des jours ou retirez des lieux, puis vérifiez les vrais trajets.</p>' : ''}${mapsLinks(day, mode).map((url, j, links) => `<a class="secondary" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Ouvrir dans Maps${links.length > 1 ? ` · partie ${j + 1}` : ''} →</a>`).join('')}</article>`;
     }).join('');
 
   $('#results').dataset.tripId = record.id;
   $('#results').hidden = false;
   document.body.dataset.view = 'trip';
+  document.title = record.name + ' — Voyage';
   const hash = '#voyage=' + encodeURIComponent(record.id);
   if (location.hash !== hash) history.pushState(null, '', hash);
   cached.days.forEach((day, i) => { const target = document.querySelector(`[data-google-day="${i}"]`); if (target) target.textContent = day.text; });
@@ -295,7 +312,7 @@ $('#wiki-search').addEventListener('click', async () => {
     const automatic = prepared ? prepared.automatic : automaticArticle(context, options);
     if (automatic) { $('#place-form').elements.description.value = automatic.description; articleSource = automatic.sourceURL; }
     $('#wiki-status').textContent = automatic ? 'Premier résultat concordant sélectionné : nom et position correspondent. Enregistrez le lieu.' : options.length ? 'Correspondance incertaine : choisissez la bonne fiche.' : prepared?.warning || 'Aucune fiche trouvée. Précisez le nom, la ville et le pays ou saisissez un descriptif.';
-    $('#wiki-options').innerHTML = options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.title)}</strong><p class="small muted">${escape(o.language || '')} · ${o.verifiedLocation ? `Position de la fiche à ${o.km.toFixed(1)} km du lieu validé` : 'Position de la fiche non vérifiée : contrôlez la ville et le pays'}</p><p class="small muted">${escape(o.description)}</p><a href="${escape(o.sourceURL)}" target="_blank" rel="noopener noreferrer">Lire la fiche Wikipédia ↗</a><button type="button" class="secondary" data-article="${i}">Utiliser ce descriptif</button></article>`).join('');
+    $('#wiki-options').innerHTML = options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.title)}</strong><p class="small muted">${escape(o.language || '')} · ${o.verifiedLocation ? `Position de la fiche à ${o.km.toFixed(1)} km du lieu validé` : 'Position de la fiche non vérifiée : contrôlez la ville et le pays'}</p><p class="small muted">${escape(o.description)}</p><a href="${escape(o.sourceURL)}" target="_blank" rel="noopener noreferrer">Lire la fiche Wikipédia →</a><button type="button" class="secondary" data-article="${i}">Utiliser ce descriptif</button></article>`).join('');
   } catch (error) { if (generation === articleGeneration) $('#wiki-status').textContent = error.message; }
 });
 $('#wiki-options').addEventListener('click', e => {
@@ -316,7 +333,11 @@ $('#export').addEventListener('click', () => {
 function renderTrips() {
   $('#trip-count').textContent = trips.length;
   $('#no-trips').hidden = trips.length > 0;
-  $('#trip-folders').innerHTML = trips.map(t => `<article class="trip-folder"><span class="folder-icon" aria-hidden="true">▱</span><h3>${escape(t.name)}</h3><p class="trip-date small muted">${escape(formatTripCreatedAt(t.createdAt))}</p><p class="muted">${escape(t.country)} · ${t.days} jours · ${t.places.length} lieux</p><p class="small muted">${t.mode === 'walking' ? 'À pied' : 'En voiture'} · ${t.fileOrder ? 'Ordre du carnet' : 'Par proximité'}</p><div class="folder-actions"><button class="secondary" data-trip-open="${escape(t.id)}">Consulter</button><button class="quiet" data-trip-edit="${escape(t.id)}">Modifier</button><button class="danger-button" data-trip-delete="${escape(t.id)}">Supprimer</button></div></article>`).join('');
+  $('#nav-trip-count').textContent = trips.length;
+  $('#trip-folders').innerHTML = trips.map(t => {
+    const theme = destinationTheme(t);
+    return `<article class="trip-folder" data-destination="${theme.id}" style="${themeStyle(theme)}"><div class="folder-cover">${themeIllustration(theme)}<span class="destination-chip">${escape(t.country)} · ${theme.code}</span><span class="folder-cover-number">${t.days} jours d’évasion</span></div><div class="folder-body"><p class="folder-mood">${escape(theme.label)}</p><h3>${escape(t.name)}</h3><p class="trip-date small muted">${escape(formatTripCreatedAt(t.createdAt))}</p><div class="folder-stats"><span>⌁ ${t.places.length} lieu${t.places.length > 1 ? 'x' : ''}</span><span>${t.mode === 'walking' ? 'À pied' : 'En voiture'}</span><span>${t.fileOrder ? 'Ordre du carnet' : 'Par proximité'}</span></div><div class="folder-actions"><button class="secondary" data-trip-open="${escape(t.id)}">Consulter <span aria-hidden="true">→</span></button><button class="quiet" data-trip-edit="${escape(t.id)}">Modifier</button><button class="danger-button" data-trip-delete="${escape(t.id)}">Supprimer</button></div></div></article>`;
+  }).join('');
 }
 function renderTripEditor() {
   const form = $('#trip-form'), currentStart = form.elements.startId.value;
@@ -347,7 +368,7 @@ $('#trip-folders').addEventListener('click', e => {
     }
     if (remove && confirm(`Supprimer le dossier « ${trip.name} » ? Les lieux de votre carnet seront conservés.`)) {
       storeTrips(trips.filter(t => t.id !== id));
-      if ($('#results').dataset.tripId === id) { $('#results').hidden = true; currentRecord = null; routeGeneration++; }
+      if ($('#results').dataset.tripId === id) { $('#results').hidden = true; currentRecord = null; routeGeneration++; location.hash = '#voyages'; }
       notice(`Le voyage « ${trip.name} » a été supprimé.`);
     }
   } catch (error) { notice(error.message); }
@@ -528,7 +549,7 @@ async function resolveNext(refineSearch = false) {
     if (generation !== resolveGeneration) return;
     resolveOptions = options;
     $('#resolve-status').textContent = options.length ? 'Confirmez la bonne correspondance avant de conserver les coordonnées.' : 'Aucun résultat trouvé. Précisez la ville et le pays ci-dessus, essayez Photon ou saisissez les coordonnées depuis le lien Maps.';
-    $('#resolve-candidates').innerHTML = options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.name)}</strong><p class="small muted">${escape(o.address)} · ${escape(o.country || 'Pays inconnu')}</p><p class="small muted">${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}${o.exact ? ' · Identifiant Google identique au lien enregistré' : ''}</p>${resultLink(o.url) ? `<a class="place-link" href="${escape(resultLink(o.url))}" target="_blank" rel="noopener noreferrer">Vérifier le lieu · ${escape(o.source || 'Google Maps')} ↗</a>` : ''}<button class="secondary" type="button" data-resolve-choice="${i}">${missingWorkflow ? 'Confirmer et rechercher le suivant' : 'Confirmer ce lieu'}</button></article>`).join('');
+    $('#resolve-candidates').innerHTML = options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.name)}</strong><p class="small muted">${escape(o.address)} · ${escape(o.country || 'Pays inconnu')}</p><p class="small muted">${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}${o.exact ? ' · Identifiant Google identique au lien enregistré' : ''}</p>${resultLink(o.url) ? `<a class="place-link" href="${escape(resultLink(o.url))}" target="_blank" rel="noopener noreferrer">Vérifier le lieu · ${escape(o.source || 'Google Maps')} →</a>` : ''}<button class="secondary" type="button" data-resolve-choice="${i}">${missingWorkflow ? 'Confirmer et rechercher le suivant' : 'Confirmer ce lieu'}</button></article>`).join('');
   if (missingWorkflow) ($('#resolve-candidates button') || $('#resolve-skip')).focus();
   } catch (error) { if (generation === resolveGeneration) $('#resolve-status').textContent = `${googleError(error)} Vérifiez la connexion et les réglages du service, ou précisez le pays et la ville dans le nom du lieu.`; }
 }
@@ -648,7 +669,7 @@ async function descriptionStep(refined = null) {
     for (const field of ['name', 'localName', 'city', 'country']) form.elements[field].value = prepared.context[field] || '';
     if (prepared.automatic) { saveBatchDescription(prepared.automatic); return; }
     $('#description-status').textContent = prepared.warning || (prepared.options.length ? 'Nom ou position incertains : choisissez la bonne fiche.' : 'Aucune fiche trouvée : précisez le nom et la ville ou passez au suivant.');
-    $('#description-options').innerHTML = prepared.options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.title)}</strong><p class="small muted">${escape(o.language)} · ${o.verifiedLocation ? `${o.km.toFixed(1)} km du lieu` : 'Position non vérifiée'}</p><p>${escape(o.description)}</p><a href="${escape(o.sourceURL)}" target="_blank" rel="noopener noreferrer">Vérifier la fiche ↗</a><button class="secondary" type="button" data-description-choice="${i}">Choisir et continuer</button></article>`).join('');
+    $('#description-options').innerHTML = prepared.options.map((o, i) => `<article class="resolve-option"><strong>${escape(o.title)}</strong><p class="small muted">${escape(o.language)} · ${o.verifiedLocation ? `${o.km.toFixed(1)} km du lieu` : 'Position non vérifiée'}</p><p>${escape(o.description)}</p><a href="${escape(o.sourceURL)}" target="_blank" rel="noopener noreferrer">Vérifier la fiche →</a><button class="secondary" type="button" data-description-choice="${i}">Choisir et continuer</button></article>`).join('');
   } catch (error) { if (version === descriptionVersion) $('#description-status').textContent = error.message; }
 }
 function saveBatchDescription(article) {
@@ -683,10 +704,20 @@ $('#description-dialog').addEventListener('close', () => {
   const trip = descriptionTrip(); descriptionSession = null;
   if (trip && currentRecord?.id === trip.id) showTrip(trip);
 });
-function showHome() {
-  document.body.dataset.view = 'home'; $('#results').hidden = true; window.scrollTo({ top: 0 });
+function showHome(prepare = false) {
+  document.body.dataset.view = 'home'; $('#results').hidden = true; $('#trips-page').hidden = true;
+  setDestination(destinationTheme()); setNav(prepare ? 'prepare' : 'home');
+  document.title = 'Voyage — Vos envies, un itinéraire';
+  if (prepare) $('#carnet').scrollIntoView({ behavior: 'smooth', block: 'start' }); else window.scrollTo({ top: 0 });
+}
+function showTrips() {
+  document.body.dataset.view = 'trips'; $('#results').hidden = true; $('#trips-page').hidden = false;
+  setDestination(destinationTheme()); setNav('trips'); renderTrips();
+  document.title = 'Mes voyages — Voyage'; window.scrollTo({ top: 0 });
 }
 function restorePage() {
+  if (['#voyages', '#my-trips'].includes(location.hash)) { showTrips(); return; }
+  if (location.hash === '#carnet') { showHome(true); return; }
   if (location.hash.startsWith('#voyage=')) {
     let id; try { id = decodeURIComponent(location.hash.slice(8)); } catch { showHome(); return; }
     const trip = trips.find(t => t.id === id);
@@ -695,6 +726,11 @@ function restorePage() {
   showHome();
 }
 window.addEventListener('hashchange', restorePage);
+document.querySelectorAll('header a[href^="#"]').forEach(link => link.addEventListener('click', e => {
+  e.preventDefault(); const hash = link.getAttribute('href');
+  if (location.hash !== hash) history.pushState(null, '', hash);
+  restorePage();
+}));
 renderTrips();
 $('#print').addEventListener('click', () => window.print());
 render();

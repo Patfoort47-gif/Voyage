@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
-const allowed = new Set(['index.html', 'style.css', 'src/app.js', 'src/core.js', 'src/trips.js', 'src/google-maps.js', 'src/free-maps.js', 'src/trip-map.js', 'src/place-info.js', 'src/descriptions.js', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css', 'vendor/leaflet/images/marker-icon.png', 'vendor/leaflet/images/marker-icon-2x.png', 'vendor/leaflet/images/marker-shadow.png', 'vendor/leaflet/images/layers.png', 'vendor/leaflet/images/layers-2x.png']);
+const allowed = new Set(['index.html', 'style.css', 'design.css', 'src/app.js', 'src/core.js', 'src/trips.js', 'src/google-maps.js', 'src/free-maps.js', 'src/trip-map.js', 'src/place-info.js', 'src/descriptions.js', 'src/destination-theme.js', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css', 'vendor/leaflet/images/marker-icon.png', 'vendor/leaflet/images/marker-icon-2x.png', 'vendor/leaflet/images/marker-shadow.png', 'vendor/leaflet/images/layers.png', 'vendor/leaflet/images/layers-2x.png']);
 const server = http.createServer(async (req, res) => {
   try {
     const name = decodeURIComponent(new URL(req.url, 'http://localhost').pathname).replace(/^\//, '') || 'index.html';
