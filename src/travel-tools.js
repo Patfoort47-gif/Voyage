@@ -1,3 +1,4 @@
+import { bookingTextFields, bookingCountFields } from './booking-forms.js';
 import { clothingItems } from './packing-clothes.js';
 import { extraCurrencies } from './destination-currency.js';
 import { coordinates } from './core.js';
@@ -122,8 +123,10 @@ export function validateOrganizer(data) {
       if(!object(row)||!identifier(row.id)||ids.has(row.id)||!text(row.title,150)||!row.title.trim()||!url(row.url))fail();ids.add(row.id);
       if(key==='bookings') {
         if(!day(row.day)||!['flight','transport','hotel','museum','activity','restaurant'].includes(row.kind)||!text(row.notes,3000)||!text(row.reference,150)||!text(row.placeId,200))fail();
-        for(const key of ['bookingDate','checkoutDate']) if(row[key]!==undefined && (!text(row[key],10)||row[key]&&!dateForDay(row[key],1)))fail();
-        if(row.bookingDate && row.checkoutDate && row.checkoutDate<row.bookingDate)fail();
+        for(const key of ['bookingDate','checkoutDate','arrivalDate']) if(row[key]!==undefined && (!text(row[key],10)||row[key]&&!dateForDay(row[key],1)))fail();
+        if(row.kind==='hotel' && row.bookingDate && row.checkoutDate && row.checkoutDate<row.bookingDate)fail();
+        for(const key of bookingTextFields)if(row[key]!==undefined&&!text(row[key],300))fail();
+        for(const key of bookingCountFields)if(row[key]!==undefined&&row[key]!==''&&(!Number.isInteger(row[key])||row[key]<1||row[key]>1000))fail();
         for(const time of [row.time,row.endTime])if(!text(time,5)||time&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))fail();
         if(row.attachment && (!object(row.attachment)||!identifier(row.attachment.id)||!text(row.attachment.name,255)||!['application/pdf','image/png','image/jpeg','image/webp'].includes(row.attachment.type)||!number(row.attachment.size)||row.attachment.size>10*1024*1024))fail();
       } else if(!number(row.normal)||!number(row.price)||!currency(row.currency)||typeof row.eligible!=='boolean'||!['student','youth','pass','other'].includes(row.kind)||!text(row.conditions,3000)||!dateForDay(row.checkedDate,1))fail();

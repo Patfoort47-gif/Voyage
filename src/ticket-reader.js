@@ -24,9 +24,7 @@ export async function readTicket(file,progress) {
     let text='',scans=0;const warnings=[];
     for(let i=1;i<=pdf.numPages;i++) {
       progress?.(`Lecture du PDF : page ${i} / ${pdf.numPages}`);
-      const page=await pdf.getPage(i),content=await page.getTextContent();let line='',lastY=null,pageText='';
-      for(const item of content.items) {if(!item.str)continue;const y=item.transform?.[5];if(lastY!==null&&Math.abs(y-lastY)>3){pageText+=line+'\n';line='';}line+=(line?' ':'')+item.str;lastY=y;if(item.hasEOL){pageText+=line+'\n';line='';lastY=null;}}
-      pageText+=line;
+      const page=await pdf.getPage(i),content=await page.getTextContent();let pageText=pdfPageText(content.items);
       if(pageText.replace(/\s/g,'').length<20) {
         if(scans>=3){warnings.push('Seules les trois premières pages scannées ont été reconnues. Importez les autres séparément.');continue;}
         scans++;const initial=page.getViewport({scale:1}),scale=Math.min(2,2000/Math.max(initial.width,initial.height)),viewport=page.getViewport({scale});
@@ -39,4 +37,20 @@ export async function readTicket(file,progress) {
     return {text:text.slice(0,100000),method:scans?'PDF et reconnaissance d’image':'Texte du PDF',warnings};
   } catch(error) {if(error.name==='PasswordException')throw new Error('Ce PDF est protégé par un mot de passe. Fournissez une copie déverrouillée.');throw error;}
   finally {await task.destroy();}
+}
+
+// Réunit les morceaux d’une ligne et conserve les colonnes sans dépendre de l’ordre interne du PDF.
+export function pdfPageText(items) {
+  const rows=[];
+  for(const item of items) {
+    if(!item.str?.trim())continue;
+    const x=item.transform?.[4]||0,y=item.transform?.[5]||0;
+    let row=rows.find(row=>Math.abs(row.y-y)<=3);
+    if(!row){row={y,items:[]};rows.push(row);}
+    row.items.push({x,text:item.str,width:item.width||0});
+  }
+  return rows.sort((a,b)=>b.y-a.y).map(row=>{
+    const parts=row.items.sort((a,b)=>a.x-b.x);
+    return parts.map((part,index)=>{const previous=parts[index-1];return (index?(part.x-previous.x-previous.width>18?'    ':' '):'')+part.text;}).join('');
+  }).join('\n');
 }

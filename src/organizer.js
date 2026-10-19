@@ -1,12 +1,13 @@
+import { renderBookingForm, bookingDetails, bookingSection, bookingTextFields, bookingCountFields } from './booking-forms.js';
 import { ticketPlaceStatus, ticketPlaces } from './ticket-places.js';
 import { parseTicket } from './ticket-parser.js';
 import { destinationCurrency } from './destination-currency.js';
 import { findOfficialSite } from './official-sites.js';
-import { currencies, safeLink, dateForDay, organizerData, convert, dailyBudget, offerSavings, fetchRates, fetchWeather, packingItems, waypointsGPX, officialOfferSources, weatherPlan, weatherNeedsRefresh } from './travel-tools.js';
+import { currencies, safeLink, dateForDay, organizerData, convert, dailyBudget, fetchRates, fetchWeather, packingItems, waypointsGPX, weatherPlan, weatherNeedsRefresh } from './travel-tools.js';
 import { documentFile } from './travel-files.js';
 import { planTrip, coordinates } from './core.js';
 
-export const travelPages = { route:'Itinéraire', reservations:'Billets & horaires', budget:'Budget & devises', offres:'Réductions & pass', checklist:'Ma check-list' };
+export const travelPages = { route:'Itinéraire', reservations:'Billets & horaires', budget:'Budget & devises', checklist:'Ma check-list' };
 const escape = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = (amount,currency)=>new Intl.NumberFormat('fr-FR',{style:'currency',currency}).format(amount);
 const options = (list,value)=>list.map(([id,label])=>`<option value="${escape(id)}" ${String(id)===String(value)?'selected':''}>${escape(label)}</option>`).join('');
@@ -22,7 +23,7 @@ function download(blob,name) {
 }
 export class Organizer {
   constructor(root,{getTrip,saveTrip}) {
-    this.root=root; this.getTrip=getTrip; this.saveTrip=saveTrip; this.id=''; this.page=''; this.generation=0; this.bookingSection='sejour'; this.weatherPending=null; this.weatherAttempts=new Map();
+    this.root=root; this.getTrip=getTrip; this.saveTrip=saveTrip; this.id=''; this.page=''; this.generation=0; this.bookingSection='flight'; this.weatherPending=null; this.weatherAttempts=new Map();
     root.addEventListener('submit',e=>this.submit(e));
     root.addEventListener('click',e=>this.click(e));
     root.addEventListener('change',e=>this.change(e));
@@ -47,12 +48,13 @@ export class Organizer {
   }
   dayOptions(trip,value=1) { return options(Array.from({length:trip.days},(_,i)=>[i+1,`Jour ${i+1}${dateForDay(organizerData(trip).startDate,i+1)?' · '+dateForDay(organizerData(trip).startDate,i+1):''}`]),value); }
   reservations(trip,data) {
-    const stay=this.bookingSection==='sejour';
-    const rows=data.bookings.filter(b=>stay ? ['flight','hotel'].includes(b.kind) : !['flight','hotel'].includes(b.kind)).sort((a,b)=>a.day-b.day || (a.time||'').localeCompare(b.time||''));
-    return `${title('01 / TOUT SOUS LA MAIN','Vos billets, sans fouiller.','Réunissez transports, hôtels, restaurants, billets et horaires de visite dans un agenda par jour.')}<nav class="booking-tabs" aria-label="Catégories de réservations"><button class="secondary" data-booking-section="sejour" aria-pressed="${stay}">✈ Vols & hôtels (${data.bookings.filter(b=>['flight','hotel'].includes(b.kind)).length})</button><button class="secondary" data-booking-section="visites" aria-pressed="${!stay}">Visites & transports locaux (${data.bookings.filter(b=>!['flight','hotel'].includes(b.kind)).length})</button></nav><p class="small muted">Ajoutez autant de réservations que nécessaire, dans la limite du stockage de votre navigateur. Chaque entrée peut avoir son propre billet.</p>
-    <section class="tools-card ticket-import"><h3>Lire les informations d’un billet</h3><label>Importer un billet PDF, photo ou scan (10 Mo maximum)<input id="ticket-upload" type="file" accept="application/pdf,image/png,image/jpeg,image/webp"></label><p id="ticket-read-status" class="small muted" role="status">Lecture locale, sans envoi du billet. Les informations trouvées préremplissent le formulaire ci-dessous, à vérifier avant d’enregistrer.</p><details><summary>Voir le texte lu ou coller le texte du billet</summary><label>Texte du document<textarea id="ticket-transcript" rows="7" maxlength="100000"></textarea></label><button class="secondary" data-action="parse-ticket">Préremplir depuis ce texte</button></details><p class="small muted">Un document par réservation. Pour un PDF contenant plusieurs trajets ou billets, vérifiez les champs et créez plusieurs entrées si nécessaire. Les QR codes ne sont pas décodés.</p></section>
-    <div class="tools-grid"><section class="tools-card"><h3>Ajouter ou modifier une réservation</h3><form id="booking-form"><input type="hidden" name="id">${field('title','Nom / établissement','text','required maxlength="150"')}<div class="two-col"><label>Type<select name="kind">${options(stay?[['flight','Vol / billet d’avion'],['hotel','Hôtel / hébergement']]:[['transport','Transport en commun / local'],['museum','Musée / horaires'],['activity','Activité'],['restaurant','Restaurant']],stay?'flight':'museum')}</select></label><label>Journée<select name="day">${this.dayOptions(trip)}</select></label></div><div class="two-col">${field('bookingDate',stay?'Date du vol / d’arrivée à l’hôtel':'Date de visite / du billet','date')}${stay?field('checkoutDate','Date du retour / de départ de l’hôtel','date'):''}</div><label>Lieu du carnet<select name="placeId"><option value="">Autre / aucun</option>${options((stay?trip.places:ticketPlaces(trip,data)).map(p=>[p.id,p.name]),'')}</select></label><div class="two-col">${field('time','Heure de début / ouverture','time')}${field('endTime','Heure de fin / fermeture','time')}</div>${field('reference','Numéro de réservation','text','maxlength="150"')}${field('url','Lien officiel / réservation','url','placeholder="https://…"')}<label>Horaires, adresse et conditions<textarea name="notes" maxlength="3000" placeholder="Fermé le lundi, dernier accès à 17 h, adresse du logement…"></textarea></label><label>Billet PDF ou image (10 Mo maximum)<input name="file" type="file" accept="application/pdf,image/png,image/jpeg,image/webp"></label><label class="check-label"><input name="removeFile" type="checkbox"> Retirer le fichier déjà associé</label><p class="small muted">Les documents restent sur cet appareil. Exportez le dossier pour les sauvegarder. Horaires saisis par vous : vérifiez les exceptions sur le site officiel.</p>${formButtons('Enregistrer la réservation')}</form></section>
-    <section class="tools-card"><h3>Votre agenda <span class="count">${rows.length}</span></h3>${rows.length?rows.map(b=>`<article class="tool-entry"><span class="eyebrow">${b.bookingDate?escape(b.bookingDate):'Jour '+b.day}${!b.bookingDate&&dateForDay(data.startDate,b.day)?' · '+dateForDay(data.startDate,b.day):''} · ${escape(b.time||'Heure à préciser')}${b.endTime?' → '+escape(b.endTime):''}</span><h4>${escape(b.title)}</h4><label class="booking-classify">Ranger dans<select data-booking-kind="${escape(b.id)}">${options([['flight','Vol / avion'],['hotel','Hôtel / hébergement'],['museum','Musée / horaires'],['transport','Transport local'],['activity','Activité'],['restaurant','Restaurant']],b.kind)}</select></label>${b.checkoutDate?`<p>Retour / départ : ${escape(b.checkoutDate)}</p>`:''}${b.placeId?`<p>${escape(trip.places.find(p=>p.id===b.placeId)?.name||'Lieu retiré du parcours')}</p>`:''}${b.reference?`<p>Référence : ${escape(b.reference)}</p>`:''}<p class="preserve-lines">${escape(b.notes)}</p>${link(b.url,'Site / réservation')}<div class="tools-actions">${b.attachment?`<button class="secondary" data-action="document" data-id="${escape(b.id)}">Télécharger ${escape(b.attachment.name)}</button>`:''}<button class="quiet" data-edit="bookings" data-id="${escape(b.id)}">Modifier</button><button class="danger-button" data-delete="bookings" data-id="${escape(b.id)}">Supprimer</button></div></article>`).join(''):'<p class="tools-empty">Les billets au même endroit, l’esprit plus léger. Ajoutez votre première réservation.</p>'}
+    const stay=this.bookingSection!=='visites';
+    const kind=stay?this.bookingSection:'museum';
+    const rows=data.bookings.filter(b=>stay ? b.kind===kind : !['flight','hotel'].includes(b.kind)).sort((a,b)=>a.day-b.day || (a.time||'').localeCompare(b.time||''));
+    return `${title('01 / TOUT SOUS LA MAIN','Vos billets, sans fouiller.','Réunissez transports, hôtels, restaurants, billets et horaires de visite dans un agenda par jour.')}<nav class="booking-tabs" aria-label="Catégories de réservations">${[['flight','✈ Vols'],['hotel','Hôtels'],['visites','Visites & transports locaux']].map(([section,label])=>`<button class="secondary" data-booking-section="${section}" aria-pressed="${this.bookingSection===section}">${label} (${data.bookings.filter(b=>bookingSection(b.kind)===section).length})</button>`).join('')}</nav><p class="small muted">Ajoutez autant de réservations que nécessaire, dans la limite du stockage de votre navigateur. Chaque entrée peut avoir son propre billet.</p>
+    <section class="tools-card ticket-import"><h3>Lire les informations d’un billet</h3><label>Importer un billet PDF, photo ou scan (10 Mo maximum)<input id="ticket-upload" type="file" accept="application/pdf,image/png,image/jpeg,image/webp"></label><label>Type du document<select id="ticket-kind">${options([['auto','Détection automatique'],['flight','Vol'],['hotel','Hôtel'],['museum','Musée / visite'],['activity','Activité / parc / zoo'],['transport','Transport local']],'auto')}</select></label><p id="ticket-read-status" class="small muted" role="status">Lecture locale, sans envoi du billet. Les informations trouvées sont proposées champ par champ. Cochez celles à appliquer, puis enregistrez la réservation.</p><details><summary>Voir le texte lu ou coller le texte du billet</summary><label>Texte du document<textarea id="ticket-transcript" rows="7" maxlength="100000"></textarea></label><button class="secondary" data-action="parse-ticket">Analyser ce texte</button></details><div id="ticket-review"></div><p class="small muted">Un document par réservation. Pour une lecture difficile, choisissez le type du document puis relancez l’analyse du texte. Pour un PDF contenant plusieurs trajets ou billets, vérifiez les champs et créez plusieurs entrées si nécessaire. Les QR codes ne sont pas décodés.</p></section>
+    <div class="tools-grid"><section class="tools-card">${renderBookingForm(kind,trip,data,this.dayOptions(trip))}</section>
+    <section class="tools-card"><h3>Votre agenda <span class="count">${rows.length}</span></h3>${rows.length?rows.map(b=>`<article class="tool-entry"><span class="eyebrow">${b.bookingDate?escape(b.bookingDate):'Jour '+b.day}${!b.bookingDate&&dateForDay(data.startDate,b.day)?' · '+dateForDay(data.startDate,b.day):''} · ${escape(b.time||'Heure à préciser')}${b.endTime?' → '+escape(b.endTime):''}</span><h4>${escape(b.title)}</h4><label class="booking-classify">Ranger dans<select data-booking-kind="${escape(b.id)}">${options([['flight','Vol / avion'],['hotel','Hôtel / hébergement'],['museum','Musée / horaires'],['transport','Transport local'],['activity','Activité'],['restaurant','Restaurant']],b.kind)}</select></label>${bookingDetails(b)}${b.placeId?`<p>${escape(trip.places.find(p=>p.id===b.placeId)?.name||'Lieu retiré du parcours')}</p>`:''}${b.reference?`<p>Référence : ${escape(b.reference)}</p>`:''}<p class="preserve-lines">${escape(b.notes)}</p>${link(b.url,'Site / réservation')}<div class="tools-actions">${b.attachment?`<button class="secondary" data-action="document" data-id="${escape(b.id)}">Télécharger ${escape(b.attachment.name)}</button>`:''}<button class="quiet" data-edit="bookings" data-id="${escape(b.id)}">Modifier</button><button class="danger-button" data-delete="bookings" data-id="${escape(b.id)}">Supprimer</button></div></article>`).join(''):'<p class="tools-empty">Les billets au même endroit, l’esprit plus léger. Ajoutez votre première réservation.</p>'}
     </section></div>${stay?'':`<section class="tools-card">${this.sitePanel(trip,data)}</section>`}<div class="tools-card"><details><summary>Informations déjà notées dans les lieux avec billet</summary>${ticketPlaces(trip,data).map(p=>`<div class="tool-entry"><strong>${escape(p.name)}</strong><p class="preserve-lines">${escape(p.practicalInfo||'Horaires non renseignés.')}</p>${link(searchURL(`${p.localName||p.name} ${p.city||''} ${trip.country} site officiel horaires`),'Rechercher le site officiel et les horaires')}</div>`).join('')}</details></div>`;
   }
   budget(trip,data) {
@@ -65,14 +67,6 @@ export class Organizer {
     <section class="tools-card"><h3>Ajouter ou modifier une dépense</h3><form id="expense-form"><input name="id" type="hidden">${field('title','Libellé','text','required maxlength="150"')}<div class="two-col">${field('amount','Montant','number','min="0" step="0.01" required')}<label>Devise<select name="currency">${currencyOptions(b.currency)}</select></label></div><div class="two-col"><label>Jour<select name="day">${this.dayOptions(trip)}</select></label><label>Catégorie<select name="category">${options(['Visites','Transport','Hébergement','Repas','Sport','Autre'].map(x=>[x,x]),'Visites')}</select></label></div><label>État<select name="state"><option value="planned">Prévue</option><option value="paid">Payée</option></select></label>${formButtons('Enregistrer la dépense')}</form></section></div>
     <section class="tools-card"><h3>Jour après jour</h3><div class="budget-days">${daily.map(d=>`<article class="budget-day ${d.total>b.dailyLimit?'over-budget':''}"><strong>Jour ${d.day}${d.day>trip.days?' (hors durée actuelle)':''}</strong><span>${money(d.total,b.currency)}</span><small>${d.missing?`${d.missing} montant(s) sans taux`:`${money(Math.abs(b.dailyLimit-d.total),b.currency)} ${d.total>b.dailyLimit?'de dépassement':'disponibles'}`}</small><meter min="0" max="${Math.max(b.dailyLimit,d.total,1)}" value="${d.total}">${d.total}</meter></article>`).join('')}</div>${b.expenses.length?b.expenses.map(e=>`<div class="expense-row"><span><strong>${escape(e.title)}</strong><small>Jour ${e.day} · ${escape(e.category)} · ${e.state==='paid'?'Payée':'Prévue'}</small></span><strong>${money(e.amount,e.currency)}</strong><button class="quiet" data-edit="expenses" data-id="${escape(e.id)}">Modifier</button><button class="danger-button" data-delete="expenses" data-id="${escape(e.id)}">Supprimer</button></div>`).join(''):'<p class="tools-empty">Ajoutez les visites, nuits, repas et déplacements pour voir votre budget par jour.</p>'}${missing?'<p class="warning">Total incomplet : certains taux sont manquants. Actualisez les taux ou renseignez-les manuellement.</p>':''}</section>`;
   }
-  offres(trip,data) {
-    const score = o => { const saving=offerSavings(o); if(saving===null)return -Infinity; const value=convert(Math.abs(saving),o.currency,data.budget.currency,data.budget.rates.values);return value===null?-Infinity:(saving<0?-value:value); };
-    const offers=[...data.offers].sort((a,b)=>score(b)-score(a));
-    return `${title('03 / LES BONS PLANS','Payez le juste prix.','Comparez un tarif étudiant ou un pass avec le prix normal des seules visites que vous avez réellement prévues. Les offres sont à vérifier auprès du vendeur officiel.')}
-    <div class="tools-grid"><section class="tools-card"><h3>Ajouter ou modifier une offre</h3><form id="offer-form"><input name="id" type="hidden">${field('title','Nom de l’offre / du pass','text','required maxlength="150"')}<label>Type<select name="kind">${options([['student','Étudiant'],['youth','Jeune / âge'],['pass','Pass musées'],['other','Autre réduction']],'student')}</select></label><label>Devise<select name="currency">${currencyOptions(data.budget.currency)}</select></label><div class="two-col">${field('normal','Total normal des visites concernées','number','min="0" step="0.01" required')}${field('price','Prix réduit / coût total du pass','number','min="0" step="0.01" required')}</div>${field('url','Lien direct officiel','url','required placeholder="https://…"')}<label>Conditions et visites incluses<textarea name="conditions" required maxlength="3000" placeholder="Âge, résidence, justificatif étudiant, lieux couverts, créneaux et durée du pass…"></textarea></label><label class="check-label"><input name="eligible" type="checkbox"> J’ai vérifié que je remplis les conditions et que mes visites sont incluses</label>${formButtons('Enregistrer l’offre')}</form></section>
-    <section class="tools-card"><h3>Vos offres triées par économie</h3><div class="offer-filters"><label>Type d’offre<select id="offer-kind-filter">${options([['','Toutes les offres'],['student','Étudiants'],['youth','Jeunes / âge'],['pass','Pass musées'],['other','Autres']],'')}</select></label><label class="check-label"><input id="offer-verified-filter" type="checkbox"> Uniquement les offres vérifiées</label></div><p class="small muted">Comparaison dans la devise du budget avec vos taux enregistrés. Une offre non vérifiée reste à confirmer. Les réductions ne se cumulent pas automatiquement ; les frais et réservations obligatoires sont à inclure dans les prix saisis.</p>${offers.length?offers.map(o=>{const saving=offerSavings(o), converted=saving===null?null:convert(Math.abs(saving),o.currency,data.budget.currency,data.budget.rates.values);return `<article class="tool-entry" data-offer-kind="${o.kind}" data-offer-verified="${o.eligible}"><span class="offer-badge">${saving===null?'Conditions à vérifier':saving>0?'Économie : '+money(saving,o.currency):saving===0?'Même coût que les billets séparés':'Plus cher de '+money(-saving,o.currency)}</span><h4>${escape(o.title)}</h4><p>Tarif normal : ${money(o.normal,o.currency)} · Offre : ${money(o.price,o.currency)}</p>${saving!==null&&o.currency!==data.budget.currency?`<p class="small muted">${converted===null?'Taux manquant : comparaison entre devises indisponible.':`Écart : ${money((saving<0?-1:1)*converted,data.budget.currency)} dans la devise du budget.`}</p>`:''}<p class="preserve-lines">${escape(o.conditions)}</p><p class="small muted">Fiche mise à jour le : ${escape(o.checkedDate)}</p>${link(o.url,'Voir les conditions et réserver')}<div class="tools-actions"><button class="quiet" data-edit="offers" data-id="${escape(o.id)}">Modifier / vérifier</button><button class="danger-button" data-delete="offers" data-id="${escape(o.id)}">Supprimer</button></div></article>`;}).join(''):'<p class="tools-empty">Un pass n’est utile que s’il couvre vos visites et revient moins cher. Ajoutez les offres à comparer ici.</p>'}</section></div>
-    <section class="tools-card"><h3>Liens utiles pour votre destination</h3><p class="small muted">Sites officiels et organisateurs de pass : vérifiez les conditions, les visites incluses et les éventuels frais avant achat. L’achat d’une carte ne garantit pas une économie.</p><div class="tools-actions official-offers">${officialOfferSources(trip).map(s=>link(s.url,s.name)).join('')}</div>${this.sitePanel(trip,data)}<h3>Trouver les offres pour vos lieux</h3><p class="muted small">Ces liens ouvrent une recherche ciblée. Ajoutez ensuite le lien officiel et les prix confirmés au comparateur ; aucune réduction n’est annoncée sans vérification.</p><div class="offer-searches">${ticketPlaces(trip,data).map(p=>`<div class="tool-entry"><strong>${escape(p.name)}</strong><div class="tools-actions">${link(searchURL(`${p.localName||p.name} ${p.city||''} ${trip.country} site officiel tarif étudiant gratuité`),'Tarifs & étudiants')}${link(searchURL(`${p.localName||p.name} ${p.city||''} ${trip.country} official museum pass included`),'Pass musées')}</div></div>`).join('')}</div></section>`;
-  }
   checklist(trip,data) {
     const packing=data.packing, items=packingItems(packing,trip.days), count=items.filter(i=>packing.checked[i.id]).length, weather=packing.weather;
     return `${title('04 / PRÊT POUR LES DÉTOURS','Votre sac, bien pensé.','Une liste adaptée à la météo de votre destination et aux activités que vous prévoyez. Course et randonnée sont suggérées si elles apparaissent dans vos lieux. Vos cases cochées restent sauvegardées.')}
@@ -83,7 +77,6 @@ export class Organizer {
   refreshTicketPanels() {
     const trip=this.getTrip(this.id),data=organizerData(trip),container=document.createElement('div');container.innerHTML=this.sitePanel(trip,data);
     const old=this.root.querySelector('#ticket-place-panel');if(old)old.replaceWith(container.firstElementChild);
-    const offers=this.root.querySelector('.offer-searches');if(offers)offers.innerHTML=ticketPlaces(trip,data).map(p=>`<div class="tool-entry"><strong>${escape(p.name)}</strong><div class="tools-actions">${link(searchURL(`${p.localName||p.name} ${p.city||''} ${trip.country} site officiel tarif étudiant gratuité`),'Tarifs & étudiants')}${link(searchURL(`${p.localName||p.name} ${p.city||''} ${trip.country} official museum pass included`),'Pass musées')}</div></div>`).join('');
   }
   async readTicketFile(file) {
     const generation=this.generation,tripId=this.id;let revision=this.formRevision;
@@ -97,30 +90,40 @@ export class Organizer {
       if(!result.text.trim())throw new Error('Aucun texte lisible. Essayez une image plus nette ou collez le texte du billet.');
       this.ticketDraft={tripId,file};
       this.root.querySelector('#ticket-transcript').value=result.text;
-      this.applyTicket(result.text);revision=this.formRevision;
-      status(`${result.method} : formulaire prérempli, à vérifier puis enregistrer. ${result.warnings.join(' ')} Le document sera joint à cette réservation.`);
+      this.prepareTicket(result.text);revision=this.formRevision;
+      status(`${result.method} : informations proposées ci-dessous, à vérifier et appliquer. ${result.warnings.join(' ')} Le document sera joint après application et enregistrement.`);
     } catch(error){status('Lecture impossible : '+error.message+' Vous pouvez compléter les champs manuellement et joindre le billet.');}
     finally {if(input.isConnected)input.disabled=false;}
   }
-  applyTicket(text) {
-    const trip=this.getTrip(this.id),data=organizerData(trip),proposed=parseTicket(text,{places:trip.places,startDate:data.startDate,days:trip.days});
-    let form=this.root.querySelector('#booking-form');if(!form)return;
-    const draft=this.ticketDraft,oldValues=new FormData(form);
-    if(proposed.kind) {
-      const section=['flight','hotel'].includes(proposed.kind)?'sejour':'visites';
-      if(section!==this.bookingSection) {
-        this.bookingSection=section;this.render();this.ticketDraft=draft;form=this.root.querySelector('#booking-form');
-        for(const [name,value] of oldValues){const input=form.elements.namedItem(name);if(input&&input.type!=='file'&&typeof value==='string')input.value=value;}
-        this.root.querySelector('#ticket-transcript').value=text;
-      }
+  prepareTicket(text) {
+    const trip=this.getTrip(this.id),data=organizerData(trip),kindChoice=this.root.querySelector('#ticket-kind').value;
+    const proposed=parseTicket(text,{places:trip.places,startDate:data.startDate,days:trip.days,kindHint:kindChoice==='auto'?null:kindChoice});
+    const labels={title:'Nom',kind:'Type',bookingDate:'Date de départ / arrivée hôtel / visite',arrivalDate:'Date d’arrivée du vol',checkoutDate:'Départ de l’hôtel',time:'Heure de départ / check-in / visite',endTime:'Heure d’arrivée / check-out / fin',reference:'Référence',placeId:'Lieu du carnet',day:'Jour du voyage',airline:'Compagnie',flightNumber:'Numéro de vol',origin:'Aéroport de départ',destination:'Aéroport d’arrivée',passenger:'Passager(s)',terminal:'Terminal de départ',arrivalTerminal:'Terminal d’arrivée',gate:'Porte',seat:'Siège(s)',baggage:'Bagages',address:'Adresse',guestName:'Nom du client',roomType:'Chambre',guests:'Voyageurs',contact:'Contact',visitors:'Visiteurs',ticketType:'Type de billet',meetingPoint:'Point de rendez-vous'};
+    this.ticketProposal=proposed;
+    const form=this.root.querySelector('#booking-form');
+    const entries=Object.entries(labels).filter(([key])=>proposed[key]!==undefined&&proposed[key]!==null&&proposed[key]!=='');
+    this.root.querySelector('#ticket-review').innerHTML=`<fieldset class="ticket-review"><legend>${entries.length} champ(s) proposé(s) · vérifiez avant d’appliquer</legend>${proposed.warnings.map(w=>`<p class="warning">${escape(w)}</p>`).join('')}${entries.map(([key,label])=>{
+      const current=form.elements.namedItem(key)?.value;
+      const checked=key==='kind'||!current||(key==='day'&&current==='1'&&form.elements.id.value==='')||current===String(proposed[key]);
+      const values={flight:'Vol',hotel:'Hôtel',museum:'Musée / visite',activity:'Activité',transport:'Transport local',restaurant:'Restaurant'};
+      return `<div class="ticket-proposal-row"><label class="check-label"><input type="checkbox" data-proposal-check="${key}" ${checked?'checked':''}>${label}</label>${key==='kind'?`<select data-proposal-value="kind">${options(Object.entries(values),proposed.kind)}</select>`:key==='placeId'?`<select data-proposal-value="placeId">${options(trip.places.map(p=>[p.id,p.name]),proposed.placeId)}</select>`:`<input type="${['bookingDate','arrivalDate','checkoutDate'].includes(key)?'date':['time','endTime'].includes(key)?'time':['day','guests','visitors'].includes(key)?'number':'text'}" data-proposal-value="${key}" aria-label="Proposition : ${label}" value="${escape(proposed[key])}" maxlength="300">`}${current&&current!==String(proposed[key])&&key!=='kind'?`<small>Valeur actuelle conservée tant que non cochée : ${escape(current)}</small>`:''}${proposed.evidence?.[key]?`<small>Lu sur le billet : ${escape(proposed.evidence[key])}</small>`:''}</div>`;
+    }).join('')}${entries.length?'<button class="primary" data-action="apply-ticket-fields">Appliquer les champs cochés au formulaire</button>':'<p>Aucun champ suffisamment identifiable. Choisissez le type du document, corrigez le texte lu si nécessaire puis relancez l’analyse, ou complétez le formulaire.</p>'}</fieldset>`;
+    this.status('Les valeurs déjà saisies restent en place. Vérifiez les propositions puis appliquez uniquement les champs souhaités.');
+  }
+  applyTicketFields() {
+    const selected={};
+    this.root.querySelectorAll('[data-proposal-check]:checked').forEach(box=>{const key=box.dataset.proposalCheck;selected[key]=this.root.querySelector(`[data-proposal-value="${key}"]`).value.trim();});
+    let form=this.root.querySelector('#booking-form');const oldValues=new FormData(form),draft=this.ticketDraft;
+    if(selected.kind && bookingSection(selected.kind)!==this.bookingSection) {
+      this.bookingSection=bookingSection(selected.kind);this.render();this.ticketDraft=draft;form=this.root.querySelector('#booking-form');
+      for(const [key,value] of oldValues){const input=form.elements.namedItem(key);if(input&&input.type!=='file'&&input.type!=='checkbox'&&key!=='kind'&&typeof value==='string')input.value=value;}
     }
-    for(const key of ['title','kind','bookingDate','checkoutDate','time','endTime','reference','placeId','day']) {
-      const input=form.elements.namedItem(key),value=proposed[key];if(input&&value!==undefined&&value!==null&&value!=='')input.value=value;
-    }
-    if(proposed.details.length) {const notes=form.elements.notes,room=3000-notes.value.length;if(room>60){const summary='Informations lues sur le billet (à vérifier) :\n'+proposed.details.join('\n');notes.value+=(notes.value?'\n\n':'')+summary.slice(0,room-2);}}
-    const filled=['title','bookingDate','time','reference'].filter(key=>proposed[key]).length;
-    this.status(`${filled} information(s) principale(s) retrouvée(s). ${proposed.warnings.join(' ')} Vérifiez les champs puis cliquez sur « Enregistrer la réservation ». Aucun horaire de trajet n’est recalculé.`);
-    const status=this.root.querySelector('#ticket-read-status');if(status)status.textContent='Champs proposés ci-dessous. Seul l’enregistrement confirme la réservation.';
+    let applied=0;
+    for(const [key,value] of Object.entries(selected)){const input=form.elements.namedItem(key);if(input){input.value=value;applied++;}}
+    if(this.ticketDraft)this.ticketDraft.applied=true;
+    this.root.querySelector('#ticket-review').innerHTML='';
+    this.root.querySelector('#ticket-read-status').textContent=`${applied} champ(s) appliqué(s). Vérifiez le formulaire puis enregistrez${this.ticketDraft?' pour joindre aussi le document':''}.`;
+    form.scrollIntoView({behavior:'smooth',block:'start'});this.status('Formulaire mis à jour avec votre sélection. Rien n’est enregistré avant validation.');
   }
   sitePanel(trip,data) {
     const visible=ticketPlaces(trip,data);
@@ -199,11 +202,13 @@ export class Organizer {
       switch(form.getAttribute('id')) {
         case 'travel-date-form': if(value('startDate')&&!dateForDay(value('startDate'),1))throw new Error('Date invalide.'); data.startDate=value('startDate'); delete data.packing.weather; break;
         case 'booking-form': {
-          const previous=data.bookings.find(b=>b.id===value('id')), selectedFile=values.get('file'), file=selectedFile?.size?selectedFile:(this.ticketDraft?.tripId===id?this.ticketDraft.file:null);
+          const previous=data.bookings.find(b=>b.id===value('id')), selectedFile=values.get('file'), file=selectedFile?.size?selectedFile:(this.ticketDraft?.tripId===id&&this.ticketDraft.applied?this.ticketDraft.file:null);
           let attachment=values.has('removeFile')?null:previous?.attachment;
           if(file?.size) { newAttachment=crypto.randomUUID(); await documentFile('put',newAttachment,file); attachment={id:newAttachment,name:file.name,type:file.type,size:file.size}; }
-          const booking={id:previous?.id||crypto.randomUUID(),title:value('title'),kind:value('kind'),day:Number(value('day')),bookingDate:value('bookingDate'),checkoutDate:value('checkoutDate'),placeId:value('placeId'),time:value('time'),endTime:value('endTime'),reference:value('reference'),notes:value('notes'),url:this.validURL(value('url')),attachment:attachment||null};
-          if(booking.bookingDate && booking.checkoutDate && booking.checkoutDate<booking.bookingDate)throw new Error('La date de retour ou de départ de l’hôtel doit suivre la date de début.');
+          const booking={...previous,id:previous?.id||crypto.randomUUID(),title:value('title'),kind:value('kind'),day:Number(value('day')),bookingDate:value('bookingDate'),checkoutDate:form.elements.namedItem('checkoutDate')?value('checkoutDate'):(previous?.checkoutDate||''),arrivalDate:form.elements.namedItem('arrivalDate')?value('arrivalDate'):(previous?.arrivalDate||''),placeId:value('placeId'),time:value('time'),endTime:value('endTime'),reference:value('reference'),notes:value('notes'),url:this.validURL(value('url')),attachment:attachment||null};
+          for(const key of bookingTextFields)if(form.elements.namedItem(key))booking[key]=value(key);
+          for(const key of bookingCountFields)if(form.elements.namedItem(key))booking[key]=value(key)?Number(value(key)):'';
+          if(booking.kind==='hotel' && booking.bookingDate && booking.checkoutDate && booking.checkoutDate<booking.bookingDate)throw new Error('La date de retour ou de départ de l’hôtel doit suivre la date de début.');
           data.bookings=[...data.bookings.filter(b=>b.id!==booking.id),booking];
           this.save(data,id); newAttachment=null;this.ticketDraft=null;
           if(previous?.attachment && previous.attachment.id!==attachment?.id) await documentFile('delete',previous.attachment.id).catch(()=>{});
@@ -218,10 +223,6 @@ export class Organizer {
         case 'expense-form': {
           const expense={id:value('id')||crypto.randomUUID(),title:value('title'),amount:this.amount(value('amount')),currency:value('currency'),day:Number(value('day')),category:value('category'),state:value('state')};
           data.budget.expenses=[...data.budget.expenses.filter(e=>e.id!==expense.id),expense];break;
-        }
-        case 'offer-form': {
-          const offer={id:value('id')||crypto.randomUUID(),title:value('title'),kind:value('kind'),normal:this.amount(value('normal')),price:this.amount(value('price')),currency:value('currency'),url:this.validURL(value('url')),conditions:value('conditions'),eligible:values.has('eligible'),checkedDate:new Date().toISOString().slice(0,10)};
-          data.offers=[...data.offers.filter(o=>o.id!==offer.id),offer];break;
         }
         case 'packing-settings-form': data.packing.laundryEvery=Number(value('laundryEvery'));break;
         case 'activities-form': for(const key of ['running','hiking','watch'])data.packing[key]=values.has(key);break;
@@ -250,9 +251,11 @@ export class Organizer {
       if(button.dataset.bookingSection) {this.ticketDraft=null;this.bookingSection=button.dataset.bookingSection;this.render();return;}
       if(button.dataset.edit) {
         this.ticketDraft=null;
-        const kind=button.dataset.edit, form=this.root.querySelector({bookings:'#booking-form',expenses:'#expense-form',offers:'#offer-form'}[kind]);
+        const kind=button.dataset.edit;
+        if(kind==='bookings')this.render();
+        const form=this.root.querySelector({bookings:'#booking-form',expenses:'#expense-form'}[kind]);
         const record=(kind==='expenses'?data.budget.expenses:data[kind]).find(r=>r.id===recordId);
-        for(const [key,value] of Object.entries(record)) { const input=form.elements.namedItem(key);if(!input||input.type==='file')continue;if(key==='day' && ![...input.options].some(o=>o.value===String(value))) input.add(new Option('Jour '+value+' (hors durée actuelle)',value)); if(input.type==='checkbox')input.checked=!!value;else input.value=value??''; }
+        for(const [key,value] of Object.entries(record)) { const input=form.elements.namedItem(key);if(!input||input.type==='file')continue;if(key==='day' && input.tagName==='SELECT' && ![...input.options].some(o=>o.value===String(value))) input.add(new Option('Jour '+value+' (hors durée actuelle)',value)); if(input.type==='checkbox')input.checked=!!value;else input.value=value??''; }
         form.scrollIntoView({behavior:'smooth',block:'center'});form.elements.title.focus();this.status('Modifiez les champs puis enregistrez.');return;
       }
       if(button.dataset.delete) {
@@ -266,7 +269,8 @@ export class Organizer {
         if(generation===this.generation){this.render();this.status('Élément supprimé.');}return;
       }
       switch(button.dataset.action) {
-        case 'parse-ticket': this.formRevision=(this.formRevision||0)+1;this.applyTicket(this.root.querySelector('#ticket-transcript').value);break;
+        case 'parse-ticket': this.formRevision=(this.formRevision||0)+1;this.prepareTicket(this.root.querySelector('#ticket-transcript').value);break;
+        case 'apply-ticket-fields': this.applyTicketFields();break;
         case 'official-sites': await this.researchSites(button.dataset.place);break;
         case 'swap-currencies': {const form=this.root.querySelector('#converter-form');const previous=form.elements.from.value;form.elements.from.value=form.elements.to.value;form.elements.to.value=previous;this.conversion();break;}
         case 'rates': {
@@ -291,11 +295,7 @@ export class Organizer {
     const target=event.target;
     if(target.id==='ticket-upload' && target.files[0]){await this.readTicketFile(target.files[0]);return;}
     if(target.dataset.ticketPlace){try{const data=organizerData(this.getTrip(this.id));data.ticketPlaces={...data.ticketPlaces,[target.dataset.ticketPlace]:target.value};this.save(data);this.refreshTicketPanels();this.status('Choix de billetterie enregistré. Le lieu reste dans votre itinéraire.');}catch(error){this.status(error.message);}return;}
-    if(['offer-kind-filter','offer-verified-filter'].includes(target.id)) {
-      const kind=this.root.querySelector('#offer-kind-filter').value,verified=this.root.querySelector('#offer-verified-filter').checked;
-      this.root.querySelectorAll('[data-offer-kind]').forEach(row=>{row.hidden=!!((kind&&row.dataset.offerKind!==kind)||(verified&&row.dataset.offerVerified!=='true'));});
-    }
-    if(target.dataset.bookingKind) {try{const data=organizerData(this.getTrip(this.id));data.bookings=data.bookings.map(b=>b.id===target.dataset.bookingKind?{...b,kind:target.value}:b);this.save(data);this.bookingSection=['flight','hotel'].includes(target.value)?'sejour':'visites';this.render();this.status('Réservation reclassée, document conservé.');}catch(error){this.status(error.message);}return;}
+    if(target.dataset.bookingKind) {try{const data=organizerData(this.getTrip(this.id));data.bookings=data.bookings.map(b=>b.id===target.dataset.bookingKind?{...b,kind:target.value}:b);this.save(data);this.bookingSection=bookingSection(target.value);this.render();this.status('Réservation reclassée, document conservé.');}catch(error){this.status(error.message);}return;}
     if(target.id==='auto-weather') {try{const data=organizerData(this.getTrip(this.id));data.packing.autoWeather=target.checked;this.save(data);this.autoWeather();}catch(error){target.checked=!target.checked;this.status(error.message);}}
     if(target.closest('#weather-form') && target.name==='placeId') {try{const data=organizerData(this.getTrip(this.id));data.packing.placeId=target.value;this.save(data);this.autoWeather();}catch(error){this.status(error.message);}}
     if(target.dataset.check) {
