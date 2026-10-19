@@ -1,3 +1,7 @@
+import { setupPWA } from './pwa.js';
+import { workspaceBackup, readBackup, prepareImportedBackup, itineraryCopy, downloadFile } from './backups.js';
+import { tripInsights, stepTracker, taskList } from './trip-insights.js';
+import { routeSnapshot } from './offline-routes.js';
 import { documentFile } from './travel-files.js';
 import { Organizer, travelPages } from './organizer.js';
 import { flagMarkup } from './country-flags.js';
@@ -17,6 +21,7 @@ $('#hero-art').innerHTML = themeIllustration(destinationTheme({ country: 'Portug
 $('#global-notices').append($('#notice'));
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 let places = [];
+let placeStorageReadable = true;
 let trips = [];
 let tripStorageReadable = true;
 let editingPlaces = [];
@@ -45,7 +50,7 @@ try {
   const saved = JSON.parse(localStorage.getItem(key) || '[]');
   if (!Array.isArray(saved)) throw new Error();
   places = saved.filter(p => p && typeof p.name === 'string').map(p => ({ ...p, id: p.id || crypto.randomUUID(), country: String(p.country || ''), category: String(p.category || 'À visiter'), selected: p.selected !== false }));
-} catch { notice('Le carnet enregistré n’a pas pu être chargé. Vous pouvez importer une sauvegarde.'); }
+} catch { placeStorageReadable=false;notice('Le carnet enregistré n’a pas pu être chargé. Vous pouvez importer une sauvegarde.'); }
 
 try { trips = loadTrips(localStorage); }
 catch { tripStorageReadable = false; notice('Les voyages enregistrés ne peuvent pas être lus. Leur sauvegarde est préservée ; vérifiez que le stockage du navigateur est accessible.'); }
@@ -235,13 +240,14 @@ function showTrip(record, page = 'route') {
   $('#google-routes').disabled = activeRouteKey === key;
   $('#google-routes-status').textContent = `Calcul à la demande, hors visites. Liaison depuis la veille incluse ; aucun hébergement ni retour. Source : OpenStreetMap / OSRM. Estimation sans trafic en temps réel.`;
   const trip = planTrip(record.places, record.days, record.startId, record.fileOrder);
+  $('#trip-insights').innerHTML=tripInsights(record);
   const mode = record.mode;
     $('#result-title').textContent = record.name;
     const km = trip.days.reduce((sum, day) => sum + day.km, 0);
-    $('#result-summary').textContent = `${record.places.length} lieux · ${trip.days.length} jours avec des visites · ${trip.fileOrder ? 'Ordre du carnet conservé (sauf le premier lieu si vous en avez choisi un). Aucun tri par proximité ni calcul des distances ou temps de trajet. Google Maps recherchera les étapes par nom et pays si elles n’ont pas de coordonnées : vérifiez chaque correspondance.' : `${Math.round(km)} km à vol d’oiseau entre les étapes.`} ${trip.unusedDays ? `${trip.unusedDays} jour(s) libre(s) pour prolonger les visites ou vous reposer.` : ''} Parcours indicatif, sans hébergement ni retour au point de départ.`;
+    $('#result-summary').textContent = `${record.places.length} lieux · ${trip.days.length} jours avec des visites · ${trip.fileOrder ? 'Ordre du carnet conservé (sauf le premier lieu si vous en avez choisi un). Aucun tri par proximité ni calcul des distances ou temps de trajet. Google Maps recherchera les étapes par nom et pays si elles n’ont pas de coordonnées : vérifiez chaque correspondance.' : `${Math.round(km)} km à vol d’oiseau entre les étapes. Tri par proximité et 2-opt${trip.kmSaved>=0.1?` : environ ${trip.kmSaved.toFixed(1)} km de détours géographiques évités`:''}. Ce tri ne minimise pas les temps routiers.`} ${trip.unusedDays ? `${trip.unusedDays} jour(s) libre(s) pour prolonger les visites ou vous reposer.` : ''} Parcours indicatif, sans hébergement ni retour au point de départ.`;
     $('#day-cards').innerHTML = trip.days.map((day, i) => {
       const hours = day.stops.length * 1.5;
-      return `<article class="day-card"><span class="day-number">JOUR ${String(i + 1).padStart(2, '0')}</span><h3>${escape(day.stops[0].name)}</h3><p class="google-day-metric" data-google-day="${i}">Trajet : kilomètres et durée non calculés</p><p class="muted">${day.stops.length} visite(s) · ${trip.fileOrder ? 'ordre du carnet' : `${Math.round(day.km)} km à vol d’oiseau`}</p>${day.previous ? `<p class="small muted">Départ du lien Maps : ${escape(day.previous.name)}, dernière étape de la veille.</p>` : ''}<ol>${day.stops.map(p => `<li><strong>${escape(p.name)}</strong><small>${escape(p.category)}</small><div class="place-details">${p.description ? `<p>${escape(p.description)}</p>` : '<p class="muted small">Descriptif non renseigné. Ajoutez une fiche ou vos informations.</p>'}${wikipediaLink(p.descriptionSource) ? `<a class="place-link" href="${escape(wikipediaLink(p.descriptionSource))}" target="_blank" rel="noopener noreferrer">Source : Wikipédia · CC BY-SA →</a>` : ''}${p.address ? `<p><strong>Adresse :</strong> ${escape(p.address)}</p>` : ''}${p.practicalInfo ? `<p><strong>À savoir :</strong> ${escape(p.practicalInfo)}</p>` : ''}${p.note ? `<p><strong>Vos notes :</strong> ${escape(p.note)}</p>` : ''}</div><div class="place-tools"><button type="button" class="quiet" data-folder-place="${escape(p.id)}">Modifier ce lieu / informations</button><button type="button" class="quiet" data-folder-locate="${escape(p.id)}">Corriger la localisation</button></div>${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Lien Maps enregistré →</a>` : ''}</li>`).join('')}</ol><p class="small muted">Visites seules : environ ${Math.ceil(hours)} h (hypothèse : 1 h 30 par lieu). Le temps de déplacement calculé s’ajoute à ce budget.</p>${hours > 8 || day.stops.length * 1.5 > 8 ? '<p class="warning">Journée probablement trop chargée. Ajoutez des jours ou retirez des lieux, puis vérifiez les vrais trajets.</p>' : ''}${mapsLinks(day, mode).map((url, j, links) => `<a class="secondary" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Ouvrir dans Maps${links.length > 1 ? ` · partie ${j + 1}` : ''} →</a>`).join('')}</article>`;
+      return `<article class="day-card"><span class="day-number">JOUR ${String(i + 1).padStart(2, '0')}</span><h3>${escape(day.stops[0].name)}</h3><p class="google-day-metric" data-google-day="${i}">Trajet : kilomètres et durée non calculés</p><p class="muted">${day.stops.length} visite(s) · ${trip.fileOrder ? 'ordre du carnet' : `${Math.round(day.km)} km à vol d’oiseau`}</p>${day.previous ? `<p class="small muted">Départ du lien Maps : ${escape(day.previous.name)}, dernière étape de la veille.</p>` : ''}<ol>${day.stops.map(p => `<li><strong>${escape(p.name)}</strong><small>${escape(p.category)}</small><div class="place-details">${p.description ? `<p>${escape(p.description)}</p>` : '<p class="muted small">Descriptif non renseigné. Ajoutez une fiche ou vos informations.</p>'}${wikipediaLink(p.descriptionSource) ? `<a class="place-link" href="${escape(wikipediaLink(p.descriptionSource))}" target="_blank" rel="noopener noreferrer">Source : Wikipédia · CC BY-SA →</a>` : ''}${p.address ? `<p><strong>Adresse :</strong> ${escape(p.address)}</p>` : ''}${p.practicalInfo ? `<p><strong>À savoir :</strong> ${escape(p.practicalInfo)}</p>` : ''}<p data-place-note="${escape(p.id)}" ${p.note?'':'hidden'}><strong>Vos notes :</strong> <span>${escape(p.note||'')}</span></p>${stepTracker(p)}</div><div class="place-tools"><button type="button" class="quiet" data-folder-place="${escape(p.id)}">Modifier ce lieu / informations</button><button type="button" class="quiet" data-folder-locate="${escape(p.id)}">Corriger la localisation</button></div>${savedMapsURL(p.url) ? `<a class="place-link" href="${escape(savedMapsURL(p.url))}" target="_blank" rel="noopener noreferrer">Lien Maps enregistré →</a>` : ''}</li>`).join('')}</ol><p class="small muted">Visites seules : environ ${Math.ceil(hours)} h (hypothèse : 1 h 30 par lieu). Le temps de déplacement calculé s’ajoute à ce budget.</p>${hours > 8 || day.stops.length * 1.5 > 8 ? '<p class="warning">Journée probablement trop chargée. Ajoutez des jours ou retirez des lieux, puis vérifiez les vrais trajets.</p>' : ''}${mapsLinks(day, mode).map((url, j, links) => `<a class="secondary" href="${escape(url)}" target="_blank" rel="noopener noreferrer">Ouvrir dans Maps${links.length > 1 ? ` · partie ${j + 1}` : ''} →</a>`).join('')}</article>`;
     }).join('');
 
   $('#results').dataset.tripId = record.id;
@@ -253,7 +259,7 @@ function showTrip(record, page = 'route') {
   cached.days.forEach((day, i) => { const target = document.querySelector(`[data-google-day="${i}"]`); if (target) target.textContent = day.text; });
   if (cached.status) $('#google-routes-status').textContent = cached.status;
   if (page === 'route') mapReady = tripMap.show(trip).then(() => cached.days.forEach((day, i) => { if (day.result?.geometry) tripMap.setRoute(i, day.result.geometry); }));
-  if (page === 'route' && !cached.attempted && activeRouteKey !== key) calculateRoutes();
+  if (page === 'route' && !cached.attempted && activeRouteKey !== key) restoreRouteSnapshot(record,key,routeGeneration);
   $('#results').scrollIntoView({ behavior: 'smooth' });
 }
 $('#plan-form').addEventListener('submit', e => {
@@ -564,6 +570,7 @@ $('#resolve-manual-form').addEventListener('submit', e => {
 });
 async function calculateRoutes(force = false) {
   if (!currentRecord || $('#google-routes').disabled) return;
+  if(!navigator.onLine){notice('Hors ligne : les calculs déjà sauvegardés restent consultables. Reconnectez-vous pour calculer un nouveau trajet.');return;}
   const record = currentRecord, key = routeKeyFor(record), generation = routeGeneration;
   const cached = routeCache.get(key);
   if (!cached || (cached.attempted && !force)) return;
@@ -593,7 +600,8 @@ async function calculateRoutes(force = false) {
         cached.days[i] = { text }; document.querySelector(`[data-google-day="${i}"]`).textContent = text; failed++;
       }
     }
-    cached.status = `${passed} journée(s) calculée(s), ${failed} non calculée(s). OpenStreetMap / OSRM sans trafic. Temps de déplacement uniquement, hors visites ; liaison depuis la veille incluse. Résultats conservés pendant cette consultation jusqu’à modification du parcours.`;
+    cached.status = `${passed} journée(s) calculée(s), ${failed} non calculée(s). OpenStreetMap / OSRM sans trafic. Temps de déplacement uniquement, hors visites ; liaison depuis la veille incluse. Résultats enregistrés pour consultation hors ligne ; estimation à la date du calcul.`;
+    if(passed>0)await routeSnapshot(key,{days:cached.days,status:cached.status});
     $('#google-routes-status').textContent = cached.status;
   } catch (error) { if (generation === routeGeneration) { cached.status = serviceError(error); $('#google-routes-status').textContent = cached.status; } }
   finally {
@@ -704,3 +712,59 @@ $('#print').addEventListener('click', () => window.print());
 render();
 
 restorePage();
+
+async function restoreRouteSnapshot(record,key,generation) {
+  const stored=await routeSnapshot(key),cached=routeCache.get(key);
+  await mapReady;
+  if(generation!==routeGeneration||currentRecord?.id!==record.id||displayedRouteKey!==key||!cached)return;
+  if(stored?.days?.length) {
+    cached.days=stored.days;cached.status=`Calcul sauvegardé le ${new Date(stored.savedAt).toLocaleString('fr-FR')}. ${stored.status}`;
+    cached.days.forEach((day,i)=>{const target=document.querySelector(`[data-google-day="${i}"]`);if(target)target.textContent=day.text;if(day.result?.geometry)tripMap.setRoute(i,day.result.geometry);});
+    $('#google-routes-status').textContent=cached.status;
+    if(!navigator.onLine||Date.now()-Date.parse(stored.savedAt)<86400000){cached.attempted=true;return;}
+  }
+  if(navigator.onLine)calculateRoutes();else $('#google-routes-status').textContent='Hors ligne : aucun calcul routier enregistré pour ce parcours. Les liaisons pointillées sont schématiques.';
+}
+function saveStep(id,patch) {
+  if(!currentRecord)throw new Error('Ouvrez d’abord un voyage.');
+  const updated=updateTripPlace(currentRecord,id,patch);storeTrips(trips.map(t=>t.id===updated.id?updated:t));currentRecord=updated;
+  const place=updated.places.find(p=>p.id===id);
+  const progress=$('#visit-progress');if(progress)progress.textContent=`${updated.places.filter(p=>p.visited).length} / ${updated.places.length} lieu(x) visité(s)`;
+  const list=[...document.querySelectorAll('[data-task-list]')].find(node=>node.dataset.taskList===id);if(list){list.innerHTML=taskList(place);const summary=list.closest('details').querySelector('summary');summary.textContent=`Ma note & mes tâches (${(place.tasks||[]).filter(t=>t.done).length}/${(place.tasks||[]).length})`;}
+  return place;
+}
+$('#day-cards').addEventListener('change',event=>{
+  const box=event.target;
+  try {
+    if(box.dataset.visited)saveStep(box.dataset.visited,{visited:box.checked});
+    if(box.dataset.placeTask){const p=currentRecord.places.find(p=>p.id===box.dataset.placeTask);saveStep(p.id,{tasks:p.tasks.map(t=>t.id===box.dataset.taskId?{...t,done:box.checked}:t)});}
+  }catch(error){box.checked=!box.checked;notice(error.message);}
+});
+$('#day-cards').addEventListener('submit',event=>{
+  const form=event.target;if(!form.dataset.stepNote&&!form.dataset.stepTask)return;event.preventDefault();
+  try {
+    const values=new FormData(form);
+    if(form.dataset.stepNote){const id=form.dataset.stepNote,p=saveStep(id,{note:String(values.get('note')||'').trim()});const node=[...document.querySelectorAll('[data-place-note]')].find(n=>n.dataset.placeNote===id);if(node){node.hidden=!p.note;node.querySelector('span').textContent=p.note;}}
+    else {const p=currentRecord.places.find(p=>p.id===form.dataset.stepTask);saveStep(p.id,{tasks:[...(p.tasks||[]),{id:crypto.randomUUID(),text:String(values.get('text')).trim(),done:false}]});form.reset();}
+    notice('Suivi du lieu enregistré. Le trajet est conservé.');
+  }catch(error){notice(error.message);}
+});
+$('#day-cards').addEventListener('click',event=>{const button=event.target.closest('[data-delete-task]');if(!button)return;try{const p=currentRecord.places.find(p=>p.id===button.dataset.taskPlace);saveStep(p.id,{tasks:(p.tasks||[]).filter(t=>t.id!==button.dataset.deleteTask)});}catch(error){notice(error.message);}});
+$('#backup-all').addEventListener('click',async event=>{event.target.disabled=true;notice('Préparation de la sauvegarde complète…');try{downloadFile(await workspaceBackup(trips,places),'voyage-sauvegarde-complete.json');notice('Sauvegarde complète exportée, billets inclus.');}catch(error){notice(error.message);}finally{event.target.disabled=false;}});
+$('#backup-trip').addEventListener('click',async()=>{if(!currentRecord)return;try{await organizer.backup(currentRecord);notice('Dossier exporté avec ses documents.');}catch(error){notice(error.message);}});
+$('#share-trip').addEventListener('click',async()=>{
+  if(!currentRecord)return;
+  try {const file=new File([JSON.stringify(itineraryCopy(currentRecord),null,2)],'voyage-itineraire-partage.json',{type:'application/json'});if(navigator.canShare?.({files:[file]}))await navigator.share({files:[file],title:currentRecord.name});else downloadFile(file,file.name);notice('Copie de l’itinéraire partagée, sans réservations ni billets. L’autre personne peut l’importer depuis « Sauvegarde & hors-ligne ».');}catch(error){if(error.name!=='AbortError')notice(error.message);}
+});
+$('#backup-import').addEventListener('change',async event=>{
+  const input=event.target,file=input.files[0];if(!file)return;input.disabled=true;let imported,committed=false;
+  try {
+    if(!tripStorageReadable||!placeStorageReadable)throw new Error('Les données locales ne sont pas lisibles. Elles sont préservées ; réparez-les avant d’importer une copie.');
+    const data=await readBackup(file);notice(`Import de ${data.trips.length} dossier(s) et ${data.places.length} lieu(x)…`);imported=await prepareImportedBackup(data);
+    const nextTrips=[...imported.trips,...trips],nextPlaces=[...places,...imported.places],oldTrips=localStorage.getItem('voyage.trips.v1'),oldPlaces=localStorage.getItem(key);
+    try {persistTrips(localStorage,nextTrips);localStorage.setItem(key,JSON.stringify(nextPlaces));}
+    catch(error){try{oldTrips===null?localStorage.removeItem('voyage.trips.v1'):localStorage.setItem('voyage.trips.v1',oldTrips);oldPlaces===null?localStorage.removeItem(key):localStorage.setItem(key,oldPlaces);}catch{}throw new Error('Stockage insuffisant : import annulé. Vos dossiers précédents sont conservés.');}
+    committed=true;trips=nextTrips;places=nextPlaces;renderTrips();render();location.hash='#voyages';notice(`${imported.trips.length} dossier(s) et ${imported.places.length} lieu(x) importés en copie. Aucun dossier existant remplacé.`);imported=null;
+  }catch(error){if(imported&&!committed)await imported.rollback();notice('Import impossible : '+error.message);}finally{input.disabled=false;input.value='';}
+});
+setupPWA();

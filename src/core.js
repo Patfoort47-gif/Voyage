@@ -1,3 +1,4 @@
+import { improvePath } from './route-optimizer.js';
 export function coordinates(lat, lng) {
   if (lat === '' || lng === '' || lat == null || lng == null) return null;
   const a = Number(lat), b = Number(lng);
@@ -83,12 +84,16 @@ export function planTrip(places, days, startId, fileOrder = false) {
   if (!fileOrder && places.some(p => !coordinates(p.lat, p.lng))) throw new Error('Ce fichier ne fournit pas les coordonnées de tous les lieux. Coche « Répartir dans l’ordre du carnet » ou complète les coordonnées pour organiser les étapes par proximité.');
   const remaining = [...places];
   const start = Math.max(0, remaining.findIndex(p => p.id === startId));
-  const ordered = [remaining.splice(start, 1)[0]];
+  let ordered = [remaining.splice(start, 1)[0]];
   while (remaining.length) {
     let best = 0;
     if (!fileOrder) remaining.forEach((p, i) => { if (distance(ordered.at(-1), p) < distance(ordered.at(-1), remaining[best])) best = i; });
     ordered.push(remaining.splice(best, 1)[0]);
   }
+  const pathLength = points => points.slice(1).reduce((sum,p,i)=>sum+distance(points[i],p),0);
+  const before = fileOrder?0:pathLength(ordered);
+  if(!fileOrder)ordered=improvePath(ordered,distance);
+  const kmSaved=fileOrder?0:Math.max(0,before-pathLength(ordered));
   // Keep geographic continuity while balancing the number of visits.
   const count = Math.min(days, ordered.length), result = []; let offset = 0;
   for (let i = 0; i < count; i++) {
@@ -99,7 +104,7 @@ export function planTrip(places, days, startId, fileOrder = false) {
     const km = fileOrder ? null : travel.slice(1).reduce((sum, p, j) => sum + distance(travel[j], p), 0);
     result.push({ stops, previous, km }); offset += size;
   }
-  return { days: result, unusedDays: days - count, fileOrder };
+  return { days: result, unusedDays: days - count, fileOrder, kmSaved };
 }
 
 export function savedMapsURL(value) {

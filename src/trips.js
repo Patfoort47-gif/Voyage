@@ -4,7 +4,7 @@ import { planTrip } from './core.js';
 export const tripsKey = 'voyage.trips.v1';
 
 export function routeSignature(trip) {
-  return JSON.stringify([trip.id, trip.days, trip.mode, trip.fileOrder, trip.startId, trip.places.map(p => [p.id, p.lat, p.lng, p.googlePlaceId || ''])]);
+  return JSON.stringify(['nearest-2opt-v1', trip.id, trip.days, trip.mode, trip.fileOrder, trip.startId, trip.places.map(p => [p.id, p.lat, p.lng, p.googlePlaceId || ''])]);
 }
 
 export function formatTripCreatedAt(value) {
@@ -30,6 +30,10 @@ export function validateTrip(trip) {
     || !trip.places.every(p => p && typeof p.id === 'string' && typeof p.name === 'string' && p.name.trim())
     || new Set(trip.places.map(p => p.id)).size !== trip.places.length) {
     throw new Error('Les données de ce voyage sont invalides.');
+  }
+  for(const place of trip.places) {
+    if(place.visited!==undefined && typeof place.visited!=='boolean')throw new Error('Le suivi de visite est invalide.');
+    if(place.tasks!==undefined && (!Array.isArray(place.tasks)||place.tasks.length>100||place.tasks.some(task=>!task||typeof task.id!=='string'||!task.id||typeof task.text!=='string'||!task.text.trim()||task.text.length>300||typeof task.done!=='boolean')||new Set(place.tasks.map(t=>t.id)).size!==place.tasks.length))throw new Error('La liste des tâches du lieu est invalide.');
   }
   if (trip.organizer !== undefined) validateOrganizer(trip.organizer);
   planTrip(trip.places, trip.days, trip.startId, trip.fileOrder);
