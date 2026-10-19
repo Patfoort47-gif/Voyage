@@ -95,3 +95,23 @@ Dans « Lieux sans coordonnées », une zone commune permet de préciser pays et
 Un compteur persistant en haut du site et un compteur dans la fenêtre de validation indiquent le total de localisations restant à trouver dans le carnet et les dossiers. Les copies indépendantes d’un même lieu sont comptées séparément. Le total se met à jour à chaque validation, import ou suppression.
 
 À la création, le dossier est sauvegardé avant de retirer du carnet les lieux inclus dans ce voyage. Les autres lieux sont conservés, toutes les cases restantes sont décochées et les filtres du carnet sont remis à zéro. Si tous les lieux ont été inclus, le carnet devient vide. Une erreur de sauvegarde du voyage laisse le carnet intact ; si seul le nettoyage du carnet échoue, un message l’indique et le dossier reste disponible. Modifier un dossier existant ne relance pas ce nettoyage.
+
+## Corriger un lieu dans un voyage sauvegardé
+
+Ouvrez le dossier avec « Consulter ». Chaque étape propose « Modifier ce lieu / informations » (nom, pays, coordonnées, lien, notes, descriptif, adresse, informations pratiques) et « Corriger la localisation » (nouvelle recherche ou saisie manuelle), même si des coordonnées sont déjà présentes. La modification concerne uniquement la copie du dossier, préserve sa date de création et met à jour le parcours. Les anciennes distances et géométries de l’affichage sont réinitialisées ; recalculez-les. Une modification invalide n’est pas sauvegardée. En mode de proximité, des coordonnées valides restent nécessaires pour tous les lieux.
+
+## Carte du voyage
+
+La carte Leaflet affiche les étapes avec une couleur et un numéro de journée. La légende permet de masquer ou afficher les jours indépendamment. Les huit couleurs sont réutilisées au-delà de huit jours ; les libellés restent distincts. Les lieux sans coordonnées sont signalés et ne sont pas placés arbitrairement.
+
+Avant calcul, les pointillés relient schématiquement les étapes consécutives connues : ils ne représentent pas une route et ne sautent pas les étapes manquantes. Le calcul gratuit OSRM demande une géométrie GeoJSON complète ; les trajets disponibles deviennent des traits pleins dans la couleur du jour. Un trajet sans géométrie ou en erreur conserve ses pointillés. La liaison depuis la veille fait partie du trajet du jour. Les tracés restent en mémoire pour la consultation courante ; les consultations suivantes peuvent être recalculées. Les données Google facultatives ne sont pas dessinées sur le fond OpenStreetMap : les liens permettent de les consulter dans Google Maps.
+
+Leaflet 1.9.4 est fourni localement dans `vendor/leaflet`, avec sa licence BSD. Le fond de carte utilise `tile.openstreetmap.org`, avec attribution OpenStreetMap, chargement des seules tuiles visibles et cache du navigateur. La [politique d’utilisation des tuiles](https://operations.osmfoundation.org/policies/tiles/) s’applique : pas de préchargement massif ou hors ligne. L’affichage transmet la zone consultée au fournisseur de tuiles ; la disponibilité du service n’est pas garantie. Un échec du fond est signalé sans bloquer les fiches ou la correction des lieux.
+
+## Descriptifs et informations des lieux
+
+Les fiches sous les étapes affichent les descriptifs, adresses, informations pratiques et notes disponibles. Les textes peuvent être saisis et modifiés directement. Une recherche Wikipédia française ou anglaise, déclenchée depuis l’éditeur, propose jusqu’à trois résumés. L’utilisateur vérifie la fiche avant « Utiliser ce descriptif », puis enregistre le lieu. Aucun descriptif n’est inventé ou attribué automatiquement à un homonyme. La source Wikipédia et sa licence CC BY-SA sont affichées avec le texte conservé. Si aucune fiche n’existe, utilisez les informations manuelles.
+
+Une correction via la recherche de localisation efface un ancien descriptif sourcé si les coordonnées changent, pour éviter de garder une fiche associée à la mauvaise localisation. Une modification manuelle du lieu permet de corriger le descriptif dans le même formulaire. Les horaires, prix et accès saisis ne sont pas vérifiés en direct. Les résumés ne remplacent pas les consignes officielles du lieu.
+
+Les exports/réimports GeoJSON du carnet conservent les descriptifs, sources, adresses et informations pratiques. Les dossiers gardent ces champs dans leur propre sauvegarde locale. Les tests couvrent les modifications isolées, la géométrie, les sources et la persistance ; les réponses OSRM, tuiles et Wikipédia sont simulées dans les vérifications navigateur.

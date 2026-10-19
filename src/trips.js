@@ -13,6 +13,11 @@ export function remainingPlaces(places, trip) {
   return places.filter(p => !included.has(p.id)).map(p => ({ ...p, selected: false }));
 }
 
+export function updateTripPlace(trip, id, patch) {
+  if (!trip.places.some(p => p.id === id)) throw new Error('Ce lieu ne figure plus dans le voyage.');
+  return validateTrip({ ...trip, updatedAt: new Date().toISOString(), places: trip.places.map(p => p.id === id ? { ...p, ...patch, id: p.id } : p) });
+}
+
 export function validateTrip(trip) {
   if (!trip || typeof trip.id !== 'string' || !trip.id || typeof trip.name !== 'string' || !trip.name.trim()
     || typeof trip.country !== 'string' || !trip.country.trim() || !['driving', 'walking'].includes(trip.mode)

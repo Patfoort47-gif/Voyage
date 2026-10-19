@@ -102,17 +102,21 @@ export async function computeFreeDay(day, mode, services = readServices(), reque
   if (stops.length < 2) return { distanceMeters: 0, durationMillis: 0, noTravel: true };
   if (!['walking', 'driving'].includes(mode)) throw new Error('Mode de déplacement non pris en charge.');
   for (const p of stops) if (!coordinates(p.lat, p.lng)) throw new Error(`Retrouvez et confirmez d’abord les coordonnées de « ${p.name} ».`);
-  let distanceMeters = 0, durationMillis = 0;
+  let distanceMeters = 0, durationMillis = 0, geometryComplete = true;
+  const geometry = [];
   // At most 25 coordinates per call; adjacent blocks share one stop, no leg.
   for (let i = 0; i < stops.length - 1; i += 24) {
     const part = stops.slice(i, i + 25), points = part.map(p => `${p.lng},${p.lat}`).join(';');
-    const url = `${serviceURL(services[mode])}/${points}?overview=false&steps=false&continue_straight=false`;
+    const url = `${serviceURL(services[mode])}/${points}?overview=full&geometries=geojson&steps=false&continue_straight=false`;
     const data = await request(url), route = data.routes?.[0];
     if (data.code !== 'Ok' || !route || !Number.isFinite(route.distance) || route.distance < 0 || !Number.isFinite(route.duration) || route.duration < 0
       || !Array.isArray(route.legs) || route.legs.length !== part.length - 1) throw new Error('Aucun trajet complet trouvé. Vérifiez les lieux ou le mode de déplacement.');
     distanceMeters += route.distance; durationMillis += route.duration * 1000;
+    const path = route.geometry?.type === 'LineString' ? route.geometry.coordinates : null;
+    if (!Array.isArray(path) || path.length < 2 || path.some(p => !Array.isArray(p) || !coordinates(p[1], p[0]))) geometryComplete = false;
+    else geometry.push(...path.map(p => [p[1], p[0]]));
   }
-  return { distanceMeters, durationMillis, noTravel: false };
+  return { distanceMeters, durationMillis, noTravel: false, geometry: geometryComplete ? geometry : null };
 }
 
 export function formatFreeRoute(result) {
